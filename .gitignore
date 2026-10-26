@@ -1,0 +1,20 @@
+# Data and generated outputs (never committed)
+data/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+
+# IDE (per-user files)
+.idea/workspace.xml
+.idea/misc.xml
+
+# OS
+.DS_Store
