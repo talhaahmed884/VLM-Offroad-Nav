@@ -1,0 +1,17 @@
+[project]
+name = "vlm-offroad-nav"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Antonio Duran", email = "aduran1030@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+vlm-offroad-nav = "vlm_offroad_nav:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
