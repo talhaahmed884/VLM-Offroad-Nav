@@ -121,6 +121,10 @@ class RellisSequence:
     def __len__(self) -> int:
         return len(self._image_paths)
 
+    def image_path(self, index: int) -> Path:
+        """Path of this frame's RGB image."""
+        return self._image_paths[index]
+
     def label_image_path(self, index: int) -> Path:
         """Path where this frame's semantic label PNG would be (it may not exist)."""
         image_name = self._image_paths[index].stem

@@ -107,6 +107,15 @@ python scripts/project_lidar.py --sequence 0 --frame 0
 
 This saves `outputs/overlay_00000_000000.png`, with each LiDAR point drawn as a dot colored by distance (blue = near, red = far).
 
+## Propose evaluation frames
+
+```bash
+python scripts/compute_label_stats.py   # once, a few minutes: class shares per labelled frame
+python scripts/select_eval_frames.py    # candidates per category + contact sheets
+```
+
+This writes `outputs/eval_candidates/candidates.csv` and one contact sheet per category (mud, water, bush, rubble, easy). In each sheet, the category's pixels are tinted magenta and the "ahead" region is outlined in white.
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)
