@@ -22,11 +22,19 @@ Download RELLIS-3D (images, Ouster point clouds, labels) plus the "Camera Intrin
 export RELLIS_ROOT=/path/to/Rellis-3D
 ```
 
-If `RELLIS_ROOT` is unset, code falls back to `./data/` (gitignored).
+If `RELLIS_ROOT` is unset, code falls back to `./data/Rellis-3D/` (gitignored), with sequence folders `00000/`–`00004/` directly inside it.
+
+## Project LiDAR into an image
+
+```bash
+python scripts/project_lidar.py --sequence 0 --frame 0
+```
+
+This saves `outputs/overlay_00000_000000.png`, with each LiDAR point drawn as a dot colored by distance (blue = near, red = far).
 
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)
 - `scripts/` — runnable entry points
-- `tests/` — pytest tests (`pytest tests/`)
+- `tests/` — pytest tests (run `pytest` from the repo root; no dataset needed)
 - `outputs/` — generated images (gitignored)

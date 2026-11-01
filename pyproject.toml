@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Lets tests `import offroad` without installing the package.
+pythonpath = ["src"]
+testpaths = ["tests"]
