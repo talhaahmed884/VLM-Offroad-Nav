@@ -118,6 +118,22 @@ This writes `outputs/eval_candidates/candidates.csv` and one contact sheet per c
 
 The chosen evaluation frames are in [`configs/eval_frames.csv`](configs/eval_frames.csv): 36 frames, the top 8 of mud, water, bush, and easy plus the top 4 rubble.
 
+## Elevation map (top-down terrain)
+
+```bash
+python scripts/build_elevation_map.py --sequence 0 --frame 0
+```
+
+This saves `outputs/elevation_00000_000000.png`: the camera image plus three top-down maps of the ground ahead (ground height, step height, and the most common ground-truth class per 25 cm cell). The vehicle is at the bottom looking up, and the cyan dashed lines show what the camera sees.
+
+## Geometric cost map (baseline)
+
+```bash
+python scripts/build_cost_map.py --sequence 0 --frame 0
+```
+
+This saves `outputs/costmap_00000_000000.png`, showing which 25 cm cells the geometry-only baseline treats as smooth, rough, unknown, or blocked (anything taller than 0.3 m above the local ground; change this with `--max-step`). It also prints how much of each ground-truth class (bush, mud, puddle, ...) the geometry marks as an obstacle.
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)
