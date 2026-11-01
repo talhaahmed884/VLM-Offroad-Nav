@@ -29,7 +29,7 @@ def test_local_ground_takes_neighborhood_minimum():
     min_z = np.full((5, 5), np.nan)
     min_z[2, 2] = 3.0  # e.g. a tree canopy cell with no ground seen
     min_z[2, 3] = -1.0  # real ground next to it
-    ground = local_ground(min_z, window_cells=3)
+    ground = local_ground(min_z, window=3)
     assert ground[2, 2] == -1.0
     assert ground[1, 4] == -1.0  # empty cell, but its neighborhood has ground
     assert np.isnan(ground[0, 0])  # nothing within one cell
@@ -82,6 +82,52 @@ def test_flat_ground_with_a_post():
     assert costmap.cost[5, 5] == 1.0  # diagonal, outside the inflation radius
     assert costmap.unknown[7, 7]
     assert costmap.cost[7, 7] == PARAMS.unknown_cost
+
+
+# A realistic grid (0.25 m cells, 20 m x 10 m) for the ground-estimation tests, with default CostParams.
+FIELD = GridSpec(x_min=0.0, x_max=20.0, y_min=-5.0, y_max=5.0, resolution=0.25)
+
+
+def surface(z_of_xy, x_range=(0.0, 20.0), y_range=(-5.0, 5.0), step=0.2) -> np.ndarray:
+    """Dense points on a surface z = z_of_xy(x, y) over the given area."""
+    xx, yy = np.meshgrid(np.arange(*x_range, step), np.arange(*y_range, step), indexing="ij")
+    x, y = xx.ravel(), yy.ravel()
+    return np.column_stack([x, y, z_of_xy(x, y)])
+
+
+def field_costmap(points: np.ndarray):
+    return geometric_cost_map(points, build_elevation_map(points, FIELD), CostParams())
+
+
+def test_sloped_ground_is_not_an_obstacle():
+    # A 12% uphill with nothing on it. A wide (6 m) "lowest point" ground estimate would put
+    # the ground ~0.36 m too low here and block everything.
+    costmap = field_costmap(surface(lambda x, y: 0.12 * x))
+    assert not costmap.obstacle.any()
+
+
+def without_patch(points: np.ndarray) -> np.ndarray:
+    """Remove ground points inside the 4 m x 4 m patch x in [8, 12), y in [-2, 2)."""
+    inside = (points[:, 0] >= 8) & (points[:, 0] < 12) & (points[:, 1] >= -2) & (points[:, 1] < 2)
+    return points[~inside]
+
+
+def test_tree_canopy_with_hidden_ground_is_unknown_not_smooth():
+    # Flat ground, except a patch where the LiDAR only sees a canopy 3 m up (ground hidden).
+    ground = without_patch(surface(lambda x, y: 0.0 * x))
+    canopy = surface(lambda x, y: 3.0 + 0.0 * x, x_range=(8.0, 12.0), y_range=(-2.0, 2.0))
+    costmap = field_costmap(np.vstack([ground, canopy]))
+    center = FIELD.cell_index(10.0, 0.1)
+    assert costmap.unknown[center]  # canopy is above the vehicle, ground not seen
+    assert not costmap.obstacle[center]
+
+
+def test_dense_bush_with_hidden_ground_is_an_obstacle():
+    # Flat ground, except a patch where the LiDAR only sees bush tops 1 m up (ground hidden).
+    ground = without_patch(surface(lambda x, y: 0.0 * x))
+    bush = surface(lambda x, y: 1.0 + 0.0 * x, x_range=(8.0, 12.0), y_range=(-2.0, 2.0))
+    costmap = field_costmap(np.vstack([ground, bush]))
+    assert costmap.obstacle[FIELD.cell_index(10.0, 0.1)]
 
 
 def test_small_bumps_cost_more_but_do_not_block():

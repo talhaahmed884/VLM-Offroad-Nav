@@ -140,7 +140,15 @@ This saves `outputs/costmap_00000_000000.png`, showing which 25 cm cells the geo
 python scripts/plan_path.py --sequence 0 --frame 0
 ```
 
-This saves `outputs/path_00000_000000.png`: the geometry-only A* path from the vehicle to a goal 20 m ahead (`--goal-distance`), drawn on the cost map, on the ground-truth classes, and projected into the camera image. It prints the path length, its cost, and the ground-truth classes it crosses, or "NO PATH" if blocked cells cut the goal off.
+This saves `outputs/path_00000_000000.png`: the geometry-only A* path from the vehicle toward a target 20 m ahead (`--goal-distance`), drawn on the cost map, on the ground-truth classes, and projected into the camera image. If obstacles cut the target off, the path goes to the closest cell it can reach, and the script reports how far short it stops. It also prints the path length, its cost, and the ground-truth classes it crosses.
+
+## Baseline on all evaluation frames
+
+```bash
+python scripts/run_baseline.py
+```
+
+This runs the geometry-only baseline on every frame in `configs/eval_frames.csv`. It saves one picture per frame and `summary.csv` (target reached or not, shortfall, length, detour ratio, cost, and the share of the path crossing each ground-truth class) to `outputs/baseline/`, then prints a summary per category.
 
 ## Layout
 

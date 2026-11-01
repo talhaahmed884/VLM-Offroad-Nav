@@ -24,8 +24,14 @@ class CostParams:
     max_step: anything taller than this above the local ground blocks the vehicle.
     vehicle_height: points higher than this above the ground (e.g. branches) are ignored,
         since the vehicle passes under them.
-    ground_window: size of the neighborhood used to estimate the ground under each cell.
-        Wide enough that cells under a tree canopy still see real ground at the edge.
+    ground_window: size of the neighborhood used to estimate the ground under each cell
+        (lowest point nearby). Kept small so that sloped ground is not mistaken for obstacles:
+        on a 10% slope a 1.5 m window puts the ground estimate only ~7 cm too low.
+    wide_ground_window: a larger neighborhood used only to detect cells whose ground is hidden
+        (under a tree canopy, inside a dense bush), where the small window sees only treetops.
+    hidden_ground_threshold: if the small-window ground is more than this above the wide-window
+        ground, the small one is treated as treetops/bush tops and the wide one is used instead.
+        Must be larger than the slope error of the wide window (~0.3 m on a 10% slope).
     roughness_weight: drivable cells cost 1 + roughness_weight * (obstacle height / max_step),
         so bumpier ground costs up to 1 + roughness_weight.
     unknown_cost: cost of cells with no usable points (not seen, or only overhead branches).
@@ -35,7 +41,9 @@ class CostParams:
 
     max_step: float = 0.3
     vehicle_height: float = 1.8
-    ground_window: float = 6.0
+    ground_window: float = 1.5
+    wide_ground_window: float = 6.0
+    hidden_ground_threshold: float = 0.5
     roughness_weight: float = 4.0
     unknown_cost: float = 3.0
     inflation_radius: float = 0.75
@@ -61,19 +69,39 @@ class CostMap:
     unknown: np.ndarray
 
 
-def local_ground(min_z: np.ndarray, window_cells: int) -> np.ndarray:
+def local_ground(min_z: np.ndarray, window: int) -> np.ndarray:
     """Estimate the ground under each cell as the lowest point in a square neighborhood.
 
     min_z: (nx, ny) lowest point per cell, NaN where empty.
-    window_cells: odd neighborhood size in cells, e.g. 25 for 6 m at 0.25 m.
+    window: odd neighborhood size in cells, e.g. 7 for 1.5 m at 0.25 m.
     Returns (nx, ny); NaN where the whole neighborhood is empty.
     """
-    radius = window_cells // 2
+    radius = window // 2
     filled = np.where(np.isnan(min_z), np.inf, min_z)
     padded = np.pad(filled, radius, constant_values=np.inf)
-    ground = sliding_window_view(padded, (window_cells, window_cells)).min(axis=(-2, -1))
+    ground = sliding_window_view(padded, (window, window)).min(axis=(-2, -1))
     ground[np.isinf(ground)] = np.nan
     return ground
+
+
+def window_cells(length: float, resolution: float) -> int:
+    """Odd number of cells covering about `length` meters, e.g. 1.5 m at 0.25 m -> 7."""
+    return 2 * round(length / (2 * resolution)) + 1
+
+
+def estimate_ground(min_z: np.ndarray, spec: GridSpec, params: CostParams) -> np.ndarray:
+    """Ground height under each cell, robust to slopes and to hidden ground.
+
+    Uses the lowest point within a small window (accurate on slopes). Where that is more
+    than `hidden_ground_threshold` above the lowest point within a wide window, the small
+    window only saw treetops or bush tops, so the wide-window ground is used instead.
+
+    min_z: (nx, ny) lowest point per cell, NaN where empty. Returns (nx, ny) meters, NaN if unknown.
+    """
+    small = local_ground(min_z, window_cells(params.ground_window, spec.resolution))
+    wide = local_ground(min_z, window_cells(params.wide_ground_window, spec.resolution))
+    hidden = (small - wide) > params.hidden_ground_threshold  # False where either is NaN
+    return np.where(hidden, wide, small)
 
 
 def obstacle_height_map(
@@ -121,8 +149,7 @@ def geometric_cost_map(
     points_flu: (N, 3+) FLU frame, meters (the same points `elevation` was built from).
     """
     spec = elevation.spec
-    window_cells = 2 * round(params.ground_window / (2 * spec.resolution)) + 1
-    ground_z = local_ground(elevation.min_z, window_cells)
+    ground_z = estimate_ground(elevation.min_z, spec, params)
     height = obstacle_height_map(points_flu, ground_z, spec, params.vehicle_height)
 
     unknown = np.isnan(height)

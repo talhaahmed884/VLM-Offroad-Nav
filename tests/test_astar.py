@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from offroad.mapping.elevation import GridSpec
-from offroad.planning.astar import astar, clear_footprint, nearest_free_cell, path_length
+from offroad.planning.astar import astar, choose_goal, clear_footprint, cost_to_come, path_length
 
 INF = math.inf
 
@@ -78,12 +78,58 @@ def test_clear_footprint_frees_cells_near_origin_only():
     assert np.isinf(cost).all()  # the input is not modified
 
 
-def test_nearest_free_cell():
-    cost = np.full(SPEC.shape, INF)
-    cost[0, 0] = 1.0
-    cost[6, 6] = 1.0
-    assert nearest_free_cell(cost, SPEC, 1.5, 1.5) == (6, 6)
-    assert nearest_free_cell(np.full(SPEC.shape, INF), SPEC, 0.0, 0.0) is None
+def test_cost_to_come_stops_at_a_wall():
+    cost = np.ones(SPEC.shape)
+    cost[4, :] = INF  # wall across the whole grid
+    reachable = np.isfinite(cost_to_come(cost, (0, 0)))
+    assert reachable[3, 7]
+    assert not reachable[4].any()
+    assert not reachable[5:].any()
+
+
+def test_cost_to_come_respects_corner_rule_and_blocked_start():
+    cost = np.ones((2, 2))
+    cost[0, 1] = INF
+    cost[1, 0] = INF
+    assert np.isinf(cost_to_come(cost, (0, 0))[1, 1])  # same corner rule as astar
+    assert np.isinf(cost_to_come(cost, (0, 1))).all()  # start itself blocked
+
+
+def test_cost_to_come_matches_astar_cost():
+    cost = np.ones((5, 5))
+    cost[2, :] = INF
+    cost[2, 4] = 1.0
+    cost[0, 2] = 4.0  # an expensive cell to make it less trivial
+    _, astar_total = astar(cost, (0, 0), (4, 0))
+    assert math.isclose(cost_to_come(cost, (0, 0))[4, 0], astar_total)
+
+
+def test_choose_goal_stops_in_front_of_wall():
+    cost = np.ones(SPEC.shape)
+    cost[4, :] = INF
+    # The target (1.25, 1.25) is the center of cell (6, 6), behind the wall. The goal is in
+    # the last row before the wall, in the same column.
+    assert choose_goal(cost, SPEC, (0, 0), 1.25, 1.25, cost_weight=0.0) == (3, 6)
+    assert choose_goal(cost, SPEC, (0, 0), 1.25, 1.25, cost_weight=0.1) == (3, 6)
+    # With no wall, the target cell itself.
+    assert choose_goal(np.ones(SPEC.shape), SPEC, (0, 0), 1.25, 1.25, cost_weight=0.1) == (6, 6)
+
+
+def test_choose_goal_skips_long_loop_for_small_gain():
+    # 10 x 10 grid of 1 m cells. Row 7 is a wall with a gap only at the far end (column 9), so
+    # the target cell (8, 0) is reachable only by a ~22-cost loop through the gap, while
+    # (6, 0), 2 m short of the target, costs 6 to reach.
+    spec = GridSpec(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0, resolution=1.0)
+    cost = np.ones(spec.shape)
+    cost[7, :9] = INF
+    assert choose_goal(cost, spec, (0, 0), 8.5, 0.5, cost_weight=0.0) == (8, 0)  # closest, whatever it costs
+    assert choose_goal(cost, spec, (0, 0), 8.5, 0.5, cost_weight=0.5) == (6, 0)  # the loop isn't worth 2 m
+
+
+def test_choose_goal_none_when_start_blocked():
+    cost = np.ones(SPEC.shape)
+    cost[0, 0] = INF
+    assert choose_goal(cost, SPEC, (0, 0), 1.25, 1.25, cost_weight=0.1) is None
 
 
 def test_path_length_in_meters():

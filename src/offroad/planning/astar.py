@@ -93,15 +93,59 @@ def clear_footprint(cost: np.ndarray, spec: GridSpec, radius: float, free_cost: 
     return cleared
 
 
-def nearest_free_cell(cost: np.ndarray, spec: GridSpec, x: float, y: float) -> Cell | None:
-    """The cell with finite cost whose center is closest to the FLU point (x, y), or None if all are blocked."""
+def cost_to_come(cost: np.ndarray, start: Cell) -> np.ndarray:
+    """Cheapest path cost from start to every cell (Dijkstra; same moves and costs as `astar`).
+
+    Returns (nx, ny) float: inf for cells that cannot be reached. All inf if the start is blocked.
+    """
+    nx, ny = cost.shape
+    best = np.full(cost.shape, np.inf)
+    if not np.isfinite(cost[start]):
+        return best
+    grid = cost.tolist()
+    best[start] = 0.0
+    frontier = [(0.0, start)]
+    while frontier:
+        cost_so_far, (i, j) = heapq.heappop(frontier)
+        if cost_so_far > best[i, j]:
+            continue  # an older, more expensive entry for this cell
+        for di, dj, step in NEIGHBORS:
+            ni, nj = i + di, j + dj
+            if not (0 <= ni < nx and 0 <= nj < ny) or math.isinf(grid[ni][nj]):
+                continue
+            if di and dj and (math.isinf(grid[ni][j]) or math.isinf(grid[i][nj])):
+                continue
+            new_cost = cost_so_far + step * (grid[i][j] + grid[ni][nj]) / 2.0
+            if new_cost < best[ni, nj]:
+                best[ni, nj] = new_cost
+                heapq.heappush(frontier, (new_cost, (ni, nj)))
+    return best
+
+
+def choose_goal(
+    cost: np.ndarray, spec: GridSpec, start: Cell, x: float, y: float, cost_weight: float
+) -> Cell | None:
+    """Pick the planning goal for a target at FLU point (x, y), meters.
+
+    Every reachable cell is scored as
+        distance from its center to the target (m) + cost_weight * cost to drive there (cost x m),
+    and the lowest score wins. So the path gets as close to the target as it can, but only
+    drives further for a gain that is worth it: with cost_weight = 0.1, getting 1 m closer is
+    worth up to 10 m of extra smooth driving. With cost_weight = 0 it is simply the closest
+    reachable cell. None only if the start cell is blocked.
+    """
+    come = cost_to_come(cost, start)
+    reachable = np.isfinite(come)
+    if not reachable.any():
+        return None
     xs = spec.x_min + (np.arange(spec.shape[0]) + 0.5) * spec.resolution
     ys = spec.y_min + (np.arange(spec.shape[1]) + 0.5) * spec.resolution
-    distance = (xs[:, None] - x) ** 2 + (ys[None, :] - y) ** 2
-    distance[~np.isfinite(cost)] = np.inf
-    if np.isinf(distance.min()):
-        return None
-    i, j = np.unravel_index(np.argmin(distance), cost.shape)
+    shortfall = np.hypot(xs[:, None] - x, ys[None, :] - y)
+    # Score only reachable cells: multiplying an unreachable cell's inf cost by a weight of 0
+    # would give NaN, which argmin would pick.
+    score = np.full(cost.shape, np.inf)
+    score[reachable] = shortfall[reachable] + cost_weight * come[reachable] * spec.resolution
+    i, j = np.unravel_index(np.argmin(score), cost.shape)
     return int(i), int(j)
 
 
