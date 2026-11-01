@@ -116,6 +116,8 @@ python scripts/select_eval_frames.py    # candidates per category + contact shee
 
 This writes `outputs/eval_candidates/candidates.csv` and one contact sheet per category (mud, water, bush, rubble, easy). In each sheet, the category's pixels are tinted magenta and the "ahead" region is outlined in white.
 
+The chosen evaluation frames are in [`configs/eval_frames.csv`](configs/eval_frames.csv): 36 frames, the top 8 of mud, water, bush, and easy plus the top 4 rubble.
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)
