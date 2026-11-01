@@ -1,9 +1,37 @@
 """Matplotlib helpers for drawing top-down grids (elevation, cost) in the FLU frame."""
 
+import matplotlib
 import numpy as np
 from matplotlib.patches import Rectangle
 
+from offroad.mapping.costmap import CostMap, CostParams
 from offroad.mapping.elevation import GridSpec
+
+UNKNOWN_RGB = (0.8, 0.8, 0.8)
+BLOCKED_RGB = (0.0, 0.0, 0.0)
+COST_CMAP = "summer"
+
+
+def cost_colors(costmap: CostMap, params: CostParams) -> np.ndarray:
+    """(nx, ny, 3) RGB picture of a cost map: drivable cells colored by cost, unknown gray, blocked black."""
+    drivable_max = 1.0 + params.roughness_weight
+    scaled = np.clip((costmap.cost - 1.0) / (drivable_max - 1.0), 0.0, 1.0)
+    rgb = matplotlib.colormaps[COST_CMAP](scaled)[..., :3]
+    rgb[costmap.unknown] = UNKNOWN_RGB
+    rgb[np.isinf(costmap.cost)] = BLOCKED_RGB
+    return rgb
+
+
+def add_cost_legend(ax, params: CostParams):
+    """Legend for a `cost_colors` picture."""
+    entries = [
+        (matplotlib.colormaps[COST_CMAP](0.0), "smooth (cost 1)"),
+        (matplotlib.colormaps[COST_CMAP](1.0), f"rough (cost {1 + params.roughness_weight:.0f})"),
+        (UNKNOWN_RGB, f"unknown (cost {params.unknown_cost:.0f})"),
+        (BLOCKED_RGB, "blocked"),
+    ]
+    handles = [Rectangle((0, 0), 1, 1, color=color) for color, _ in entries]
+    ax.legend(handles, [text for _, text in entries], loc="upper right", fontsize=8)
 
 
 def show_top_down(ax, grid: np.ndarray, spec: GridSpec, title: str, **imshow_kwargs):

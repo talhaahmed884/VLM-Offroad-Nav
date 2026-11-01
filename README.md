@@ -134,6 +134,14 @@ python scripts/build_cost_map.py --sequence 0 --frame 0
 
 This saves `outputs/costmap_00000_000000.png`, showing which 25 cm cells the geometry-only baseline treats as smooth, rough, unknown, or blocked (anything taller than 0.3 m above the local ground; change this with `--max-step`). It also prints how much of each ground-truth class (bush, mud, puddle, ...) the geometry marks as an obstacle.
 
+## Baseline A* path
+
+```bash
+python scripts/plan_path.py --sequence 0 --frame 0
+```
+
+This saves `outputs/path_00000_000000.png`: the geometry-only A* path from the vehicle to a goal 20 m ahead (`--goal-distance`), drawn on the cost map, on the ground-truth classes, and projected into the camera image. It prints the path length, its cost, and the ground-truth classes it crosses, or "NO PATH" if blocked cells cut the goal off.
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)

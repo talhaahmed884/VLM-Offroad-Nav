@@ -20,7 +20,6 @@ import matplotlib
 matplotlib.use("Agg")  # save to file only; also works without a display (e.g. on the cluster)
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from matplotlib.patches import Rectangle  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Make `import offroad` work without installing the package.
@@ -29,10 +28,14 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from offroad.data.rellis import RellisSequence, load_ontology  # noqa: E402
 from offroad.mapping.costmap import CostMap, CostParams, geometric_cost_map  # noqa: E402
 from offroad.mapping.elevation import GridSpec, build_elevation_map, lidar_to_flu, majority_label_grid  # noqa: E402
-from offroad.viz.topdown import add_class_legend, draw_camera_fov, label_colors, show_top_down  # noqa: E402
-
-UNKNOWN_RGB = (0.8, 0.8, 0.8)
-BLOCKED_RGB = (0.0, 0.0, 0.0)
+from offroad.viz.topdown import (  # noqa: E402
+    add_class_legend,
+    add_cost_legend,
+    cost_colors,
+    draw_camera_fov,
+    label_colors,
+    show_top_down,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,16 +47,6 @@ def parse_args() -> argparse.Namespace:
                         help=f"obstacle threshold in meters (default: {CostParams.max_step})")
     parser.add_argument("--out", type=Path, default=None, help="output path (default: outputs/costmap_<seq>_<frame>.png)")
     return parser.parse_args()
-
-
-def cost_colors(costmap: CostMap, params: CostParams) -> np.ndarray:
-    """(nx, ny, 3) RGB picture of the cost map: drivable cells colored by cost, unknown gray, blocked black."""
-    drivable_max = 1.0 + params.roughness_weight
-    scaled = np.clip((costmap.cost - 1.0) / (drivable_max - 1.0), 0.0, 1.0)
-    rgb = matplotlib.colormaps["summer"](scaled)[..., :3]
-    rgb[costmap.unknown] = UNKNOWN_RGB
-    rgb[np.isinf(costmap.cost)] = BLOCKED_RGB
-    return rgb
 
 
 def print_class_stats(costmap: CostMap, labels: np.ndarray, id_to_name: dict[int, str], min_cells: int = 20):
@@ -94,18 +87,7 @@ def main() -> None:
     fig.colorbar(image, ax=axes[0, 1], shrink=0.8)
 
     show_top_down(axes[1, 0], cost_colors(costmap, params), spec, f"geometric cost map (obstacle > {params.max_step} m)")
-    cost_legend = [
-        (matplotlib.colormaps["summer"](0.0), "smooth (cost 1)"),
-        (matplotlib.colormaps["summer"](1.0), f"rough (cost {1 + params.roughness_weight:.0f})"),
-        (UNKNOWN_RGB, f"unknown (cost {params.unknown_cost:.0f})"),
-        (BLOCKED_RGB, "blocked"),
-    ]
-    axes[1, 0].legend(
-        [Rectangle((0, 0), 1, 1, color=color) for color, _ in cost_legend],
-        [text for _, text in cost_legend],
-        loc="upper right",
-        fontsize=8,
-    )
+    add_cost_legend(axes[1, 0], params)
 
     show_top_down(axes[1, 1], label_colors(labels, id_to_color), spec, "most common ground-truth class")
     add_class_legend(axes[1, 1], labels, id_to_name, id_to_color)

@@ -32,6 +32,11 @@ def test_cell_center():
     assert SPEC.cell_center(0, 0) == (0.25, -0.75)
 
 
+def test_cell_index_is_inverse_of_cell_center():
+    assert SPEC.cell_index(*SPEC.cell_center(2, 3)) == (2, 3)
+    assert SPEC.cell_index(0.0, 0.0) == (0, 2)  # the FLU origin in this small grid
+
+
 def test_points_to_cells_and_bounds():
     points = np.array(
         [

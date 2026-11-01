@@ -34,6 +34,13 @@ class GridSpec:
             round((self.y_max - self.y_min) / self.resolution),
         )
 
+    def cell_index(self, x: float, y: float) -> tuple[int, int]:
+        """Cell [i, j] containing the FLU point (x, y). It may lie outside the grid."""
+        return (
+            int(np.floor((x - self.x_min) / self.resolution)),
+            int(np.floor((y - self.y_min) / self.resolution)),
+        )
+
     def cell_center(self, i: int, j: int) -> tuple[float, float]:
         """FLU (x, y) of the center of cell [i, j], meters."""
         return (
