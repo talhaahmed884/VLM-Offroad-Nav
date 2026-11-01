@@ -1,0 +1,12 @@
+# Extra packages for running the VLM locally (phase 4 onward), on top of requirements.txt.
+#
+# 1. Install PyTorch first, with the CUDA 12.8 build (needed for RTX 50-series GPUs; works on
+#    older NVIDIA GPUs too). Same command on Windows and Linux:
+#      pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+# 2. Then:
+#      pip install -r requirements-vlm.txt
+# 3. Check the setup:
+#      python scripts/check_gpu.py
+transformers==5.22.1
+accelerate==1.15.0
+bitsandbytes==0.50.2

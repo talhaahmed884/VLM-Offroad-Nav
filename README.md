@@ -99,6 +99,17 @@ If `RELLIS_ROOT` is not set, the code looks in `./data/Rellis-3D/`.
 
 RELLIS-3D is published under [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/) (non-commercial use). If you use it, cite Jiang et al., "RELLIS-3D Dataset: Data, Benchmarks and Analysis" ([arXiv 2011.12954](https://arxiv.org/abs/2011.12954)).
 
+## Run everything at once
+
+```bash
+python scripts/run_all.py              # unit tests + every script on one sample frame (about a minute)
+python scripts/run_all.py --full       # also the slow steps: all 36 evaluation frames, label statistics
+python scripts/run_all.py --tests-only # just the unit tests
+python scripts/run_all.py --list       # show the steps and their commands
+```
+
+It prints each step's output as it runs, then a pass/fail summary. Use `--only <step> ...` to run specific steps. The individual scripts are described below.
+
 ## Project LiDAR into an image
 
 ```bash
@@ -149,6 +160,52 @@ python scripts/run_baseline.py
 ```
 
 This runs the geometry-only baseline on every frame in `configs/eval_frames.csv`. It saves one picture per frame and `summary.csv` (target reached or not, shortfall, length, detour ratio, cost, and the share of the path crossing each ground-truth class) to `outputs/baseline/`, then prints a summary per category.
+
+## VLM grid overlay
+
+```bash
+python scripts/draw_grid.py --sequence 0 --frame 120   # one frame
+python scripts/draw_grid.py --eval                     # all evaluation frames -> outputs/grid/
+```
+
+This draws the labelled grid the VLM will answer in: 8 rows (A–H, from the top) by 12 columns (1–12, from the left), so the top-left cell is A1 and the bottom-right is H12. Use `--rows` and `--cols` to change it.
+
+## VLM prompt and answer checker
+
+```bash
+python scripts/vlm_prompt.py --sequence 0 --frame 120                         # print the prompt, save the gridded image
+python scripts/vlm_prompt.py --sequence 0 --frame 120 --answer my_answer.txt  # also check a saved VLM answer
+```
+
+The prompt asks the VLM for JSON with `waypoints` (grid cells from near to far), `cost_hints` (cells with a `terrain` type and a `traversability` level from `preferred` to `impassable`), and a short `reasoning`. The checker repairs common format mistakes, drops invalid cells and unknown words, and lists every problem it found. Files are saved to `outputs/vlm/`.
+
+## Run a VLM locally
+
+The VLM runs on your own GPU with PyTorch and Hugging Face Transformers. The default model is [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) in 4-bit, which fits an 8 GB GPU. Install the extra packages once (the steps are also in [`requirements-vlm.txt`](requirements-vlm.txt)):
+
+```bash
+pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements-vlm.txt
+python scripts/check_gpu.py     # checks PyTorch sees the GPU and 4-bit layers work
+```
+
+Then:
+
+```bash
+python scripts/run_vlm.py --sequence 0 --frame 120   # one frame
+python scripts/run_vlm.py                            # all evaluation frames
+```
+
+The first run downloads the model (about 9 GB) into the Hugging Face cache, outside the repo. For each frame the script names the grid cell of the 20 m target (the same target the baseline uses), sends the gridded image (shrunk to 1280 px wide) and the prompt, and checks the answer. It saves the prompt, the raw answer, the checked answer, and the response time to `outputs/vlm_runs/<model>_<settings>/`, plus `summary.csv`. The printed table shows, per category, how many answers were usable, the mean number of format problems, how many routes pass through cells the model itself marked "avoid" or "impassable" (`conflicted`), and the mean response time. Frames already answered are skipped, so an interrupted run can continue (`--overwrite` redoes them). Use `--model` and `--quantize` to try other models (e.g. `--model Qwen/Qwen3-VL-2B-Instruct --quantize none`), and `--no-briefing` to leave out the vehicle sentence.
+
+## Score and draw the VLM answers
+
+```bash
+python scripts/score_vlm.py                                   # every run in outputs/vlm_runs
+python scripts/score_vlm.py --run Qwen3-VL-8B-Instruct_4bit   # one run
+```
+
+This compares each saved answer with the RELLIS-3D camera label image, cell by cell. Is a "water" cell really water? Is a "preferred" cell really good ground? Were the puddle cells near the vehicle flagged? Was a person mentioned when one is in view? How much water does the route cross, compared with driving straight ahead? It prints one column per run and saves `outputs/vlm_runs/comparison.csv`, a `scores.csv` per run, and a picture per answer in `outputs/vlm_runs/<run>/answers/`: the camera image with the hints tinted by traversability and the route drawn on it, next to the label image. The thresholds (for example "a cell is water if ≥ 30% of its pixels are puddle or water") are constants at the top of `src/offroad/vlm/scoring.py`.
 
 ## Layout
 
