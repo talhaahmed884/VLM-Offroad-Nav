@@ -34,6 +34,20 @@ def add_cost_legend(ax, params: CostParams):
     ax.legend(handles, [text for _, text in entries], loc="upper right", fontsize=8)
 
 
+def show_cost_values(ax, fig, cost: np.ndarray, spec: GridSpec, title: str):
+    """Any (nx, ny) cost grid on a log color scale (dark = cheap ... yellow = expensive), black = blocked.
+
+    Unlike `cost_colors`, this shows costs changed by the VLM (0.7x ... 25) on one shared scale.
+    """
+    from matplotlib.colors import LogNorm
+
+    cmap = matplotlib.colormaps["viridis"].copy()
+    cmap.set_bad("black")
+    shown = np.where(np.isinf(cost), np.nan, cost)
+    image = show_top_down(ax, shown, spec, title, cmap=cmap, norm=LogNorm(vmin=0.5, vmax=30))
+    fig.colorbar(image, ax=ax, fraction=0.046, label="cost (black = blocked)")
+
+
 def show_top_down(ax, grid: np.ndarray, spec: GridSpec, title: str, **imshow_kwargs):
     """Draw an (nx, ny) or (nx, ny, 3) grid as seen from above: forward is up, left is left.
 

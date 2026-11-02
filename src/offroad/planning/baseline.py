@@ -21,10 +21,10 @@ REACHED_TOLERANCE_M = 1.0  # a path ending this close to the target counts as re
 
 @dataclass
 class BaselineResult:
-    """Everything the baseline computed for one scan.
+    """Everything one planning run computed for one scan (the baseline, or the hybrid planner via `plan_on_cost`).
 
     costmap: the geometric cost map (before the vehicle footprint was cleared).
-    cost: (nx, ny) the cost grid the planner used (footprint cleared).
+    cost: (nx, ny) the cost grid the planner used (footprint cleared; for the hybrid, the VLM-adjusted one).
     labels: (nx, ny) most common ground-truth class per cell; 0 where no points.
     target_xy: FLU (x, y) of the point the vehicle is trying to reach, meters.
     start, goal: grid cells; goal comes from `choose_goal`, or is None if the vehicle
@@ -117,8 +117,26 @@ def run_geometric_baseline(
     elevation = build_elevation_map(points_flu, spec)
     costmap = geometric_cost_map(points_flu, elevation, params)
     labels = majority_label_grid(points_flu, point_labels, spec, empty_label=UNSEEN)
+    return plan_on_cost(costmap.cost, costmap, labels, params, goal_distance, footprint_radius, goal_cost_weight)
 
-    cost = clear_footprint(costmap.cost, spec, footprint_radius)
+
+def plan_on_cost(
+    cost_grid: np.ndarray,
+    costmap: CostMap,
+    labels: np.ndarray,
+    params: CostParams = CostParams(),
+    goal_distance: float = 20.0,
+    footprint_radius: float = 2.0,
+    goal_cost_weight: float = 0.1,
+) -> BaselineResult:
+    """Choose the goal and plan the A* path on any cost grid (the baseline's, or one changed by the VLM).
+
+    cost_grid: (nx, ny) costs to plan on; costmap: the geometric cost map of the same scan (kept for
+    pictures and ground heights); labels: (nx, ny) ground-truth class per cell, for reporting.
+    The other arguments are as in `run_geometric_baseline`.
+    """
+    spec = costmap.spec
+    cost = clear_footprint(cost_grid, spec, footprint_radius)
     start = spec.cell_index(0.0, 0.0)
     target_xy = (goal_distance, 0.0)
     goal = choose_goal(cost, spec, start, *target_xy, cost_weight=goal_cost_weight)

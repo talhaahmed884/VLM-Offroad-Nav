@@ -207,6 +207,34 @@ python scripts/score_vlm.py --run Qwen3-VL-8B-Instruct_4bit   # one run
 
 This compares each saved answer with the RELLIS-3D camera label image, cell by cell. Is a "water" cell really water? Is a "preferred" cell really good ground? Were the puddle cells near the vehicle flagged? Was a person mentioned when one is in view? How much water does the route cross, compared with driving straight ahead? It prints one column per run and saves `outputs/vlm_runs/comparison.csv`, a `scores.csv` per run, and a picture per answer in `outputs/vlm_runs/<run>/answers/`: the camera image with the hints tinted by traversability and the route drawn on it, next to the label image. The thresholds (for example "a cell is water if ≥ 30% of its pixels are puddle or water") are constants at the top of `src/offroad/vlm/scoring.py`.
 
+## Image grid cells on the top-down map
+
+```bash
+python scripts/show_grid_on_map.py --sequence 0 --frame 120
+```
+
+This connects the VLM's image grid to the planner's top-down map. Every 25 cm map cell's ground point is projected into the camera image to find the grid cell it appears in. That is the same pixel-to-ground matching as ray-tracing pixels onto the terrain, done in the other direction. It saves `outputs/gridmap_<seq>_<frame>.png`: the camera image with the grid, the map painted by grid cell, and the cost map with the grid-cell borders. It also prints how far ahead each grid row reaches on the ground.
+
+## Cost map re-weighted by the VLM
+
+```bash
+python scripts/show_fused_costmap.py --sequence 1 --frame 2132   # uses the saved 8B answer for this frame
+```
+
+This applies the saved VLM answer to the geometric cost map. Each hint multiplies the cost of the map cells it covers (preferred ×0.7, ok ×1, caution ×2, avoid ×5, impassable = blocked). A LiDAR obstacle can be unblocked only if the VLM calls it short or tall grass/bush at a drivable level and it is at most 1.5 m tall; it then becomes rough-but-drivable ground, never free. Hints only apply within 25 m of the vehicle. The VLM's waypoints are traced onto the ground (the ground seen at each cell's center pixel), and cells within 1 m of that route get cost ×0.8 as soft guidance; this never unblocks anything. The settings are in `FusionParams` in `src/offroad/fusion/reweight.py`. It saves `outputs/fused_<seq>_<frame>.png` (hints and route, cost before, cost after, what changed) and prints where the waypoints landed and how many map cells became cheaper, more expensive, unblocked, or blocked. `--run` picks another VLM run folder.
+
+## Baseline vs hybrid planner on all evaluation frames
+
+```bash
+python scripts/run_hybrid.py                                   # uses the saved 8B answers
+python scripts/run_hybrid.py --run Qwen3-VL-4B-Instruct_4bit   # or the 4B answers
+python scripts/run_hybrid.py --oracle                          # "perfect" hints from the label images
+```
+
+`--oracle` replaces the VLM answer with hints made from the camera label image of each frame (water/puddle → avoid, mud → caution, trees/people/obstacles → impassable, grass/bush → ok, dirt/asphalt/concrete → preferred; see `src/offroad/vlm/oracle.py`). It shows the most the hybrid planner could gain with perfect perception. Results go to `outputs/hybrid/oracle/`.
+
+For every frame in `configs/eval_frames.csv` this plans the geometry-only path and the hybrid path. Both use the same goal choice and A*; only the cost grid differs, by the VLM's hints and route. It reads the saved VLM answers, so no GPU is needed. It saves one picture per frame to `outputs/hybrid/<run>/` (baseline red, hybrid cyan, VLM route dashed white) and `summary.csv` with both plans side by side, and prints a per-category "baseline → hybrid" table: target reached, shortfall, detour, and the share of the path on water, mud, and bush (from the LiDAR labels).
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)

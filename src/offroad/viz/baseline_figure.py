@@ -24,8 +24,10 @@ from offroad.viz.topdown import (
 PATH_RGB = (255, 0, 0)
 
 
-def draw_path_on_camera(image: np.ndarray, calib: CameraCalibration, result: BaselineResult) -> np.ndarray:
-    """Copy of the (H, W, 3) RGB image with the path drawn as red dots on the estimated ground.
+def draw_path_on_camera(
+    image: np.ndarray, calib: CameraCalibration, result: BaselineResult, color: tuple[int, int, int] = PATH_RGB
+) -> np.ndarray:
+    """Copy of the (H, W, 3) RGB image with the path drawn as dots (red by default) on the estimated ground.
 
     Path cells with unknown ground height (e.g. the blind circle around the vehicle) take
     the height of the nearest path cells that have one, so the dots stay on the ground
@@ -40,7 +42,7 @@ def draw_path_on_camera(image: np.ndarray, calib: CameraCalibration, result: Bas
     points_flu = np.column_stack([result.path_xy(), z])
     points_lidar = transform_points(invert_transform(T_FLU_FROM_LIDAR), points_flu)
     uv, _, _ = project_points_to_image(points_lidar, calib.T_cam_from_lidar, calib.K, image.shape[:2])
-    colors = np.tile(np.array(PATH_RGB, dtype=np.uint8), (len(uv), 1))
+    colors = np.tile(np.array(color, dtype=np.uint8), (len(uv), 1))
     return draw_points(image, uv, colors, radius=6)
 
 

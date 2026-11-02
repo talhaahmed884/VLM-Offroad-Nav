@@ -141,6 +141,19 @@ def inflate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
     return out
 
 
+def drivable_cost(obstacle_height: np.ndarray, params: CostParams) -> np.ndarray:
+    """Cost of each cell ignoring obstacles: 1 + roughness_weight * min(height / max_step, 1).
+
+    Unknown cells (NaN height) get unknown_cost. Obstacle cells get the roughest drivable
+    cost (1 + roughness_weight); blocking them is done separately, by inflating the obstacles.
+    obstacle_height: (nx, ny) meters above the local ground. Returns (nx, ny).
+    """
+    roughness = np.clip(np.nan_to_num(obstacle_height) / params.max_step, 0.0, 1.0)
+    cost = 1.0 + params.roughness_weight * roughness
+    cost[np.isnan(obstacle_height)] = params.unknown_cost
+    return cost
+
+
 def geometric_cost_map(
     points_flu: np.ndarray, elevation: ElevationMap, params: CostParams = CostParams()
 ) -> CostMap:
@@ -155,9 +168,7 @@ def geometric_cost_map(
     unknown = np.isnan(height)
     obstacle = ~unknown & (height > params.max_step)
 
-    roughness = np.clip(np.nan_to_num(height) / params.max_step, 0.0, 1.0)
-    cost = 1.0 + params.roughness_weight * roughness
-    cost[unknown] = params.unknown_cost
+    cost = drivable_cost(height, params)
     blocked = inflate(obstacle, round(params.inflation_radius / spec.resolution))
     cost[blocked] = LETHAL
 

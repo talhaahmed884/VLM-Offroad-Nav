@@ -62,6 +62,13 @@ STEPS = [
          ("scripts/run_vlm.py",), slow=True),
     Step("vlm-score", "phase 4: score saved VLM answers against the label images, draw them",
          ("scripts/score_vlm.py",), slow=True),
+    Step("gridmap", "phase 5: image grid cells on the top-down map for 00000/120",
+         ("scripts/show_grid_on_map.py", "--sequence", "0", "--frame", "120")),
+    # Needs a saved VLM answer for the frame (outputs/vlm_runs/...), so it runs with --full or --only.
+    Step("fused", "phase 5: cost map re-weighted by the VLM hints for 00001/2132 (tall grass)",
+         ("scripts/show_fused_costmap.py", "--sequence", "1", "--frame", "2132"), slow=True),
+    Step("hybrid", "phase 5: baseline vs hybrid planner on all 36 evaluation frames (needs saved VLM answers)",
+         ("scripts/run_hybrid.py",), slow=True),
 ]
 
 
