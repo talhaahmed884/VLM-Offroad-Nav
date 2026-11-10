@@ -70,6 +70,18 @@ class BaselineResult:
         return path_length(self.path, self.spec) if self.found else None
 
     @property
+    def mean_roughness_m(self) -> float | None:
+        """Mean obstacle/step height above local ground along the path (NaN cells skipped)
+
+        None if there is no path or every cell on the path is NaN
+        """
+        if not self.found:
+            return None
+        heights = np.array([self.costmap.obstacle_heights[c] for c in self.path], dtype=float)
+        known = heights[np.isfinite(heights)]
+        return float(known.mean()) if known.size else None
+
+    @property
     def straight_m(self) -> float | None:
         """Straight-line distance from start to goal cell, meters, or None if no goal."""
         if self.goal is None:
