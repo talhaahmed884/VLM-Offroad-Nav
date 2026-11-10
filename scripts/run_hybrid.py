@@ -41,6 +41,7 @@ from offroad.planning.hybrid import run_hybrid_planner  # noqa: E402
 from offroad.viz.hybrid_figure import draw_hybrid_figure, path_status  # noqa: E402
 from offroad.vlm.grid import ImageGrid  # noqa: E402
 from offroad.vlm.oracle import oracle_answer  # noqa: E402
+from offroad.vlm.scoring import CLASS_GROUPS, class_ids
 
 DEFAULT_RUN = "Qwen3-VL-8B-Instruct_4bit"
 NO_ANSWER = {"waypoints": [], "hints": []}  # plans exactly like the baseline
@@ -66,11 +67,16 @@ def fmt(value: float | None, digits: int = 2) -> str:
 def plan_columns(prefix: str, plan: BaselineResult, id_to_name: dict[int, str]) -> dict:
     """One plan's results as CSV columns, e.g. baseline_reached, hybrid_share_water."""
     shares = plan.class_shares()
+    hard_ids = class_ids(id_to_name, CLASS_GROUPS["hard"])
+    clearance = plan.hard_obstacle_distance(hard_ids)
+
     columns = {
         "reached": "yes" if plan.reached else "no",
         "shortfall_m": fmt(plan.shortfall_m),
         "length_m": fmt(plan.length_m),
         "detour_ratio": fmt(plan.detour_ratio, 3),
+        "hard_dist_mean_m": fmt(clearance[0] if clearance else None),
+        "hard_dist_min_m": fmt(clearance[1] if clearance else None),
     }
     for group, names in SUMMARY_GROUPS.items():
         share = sum(v for c, v in shares.items() if id_to_name.get(c) in names) if plan.found else None
@@ -86,7 +92,7 @@ def mean_of(rows: list[dict], column: str) -> float:
 
 def print_comparison(rows: list[dict]):
     """Per category: baseline -> hybrid for reached, shortfall, detour, and the class shares."""
-    columns = [("reached", None), ("short m", "shortfall_m"), ("detour", "detour_ratio"),
+    columns = [("reached", None), ("short m", "shortfall_m"), ("detour", "detour_ratio"), ("hard m", "hard_dist_mean_m"),
                *[(f"{g} %", f"share_{g}") for g in SUMMARY_GROUPS]]
     print(f"\n{'category':9s} {'frames':>6s} {'apart m':>7s} {'max m':>6s}  "
           + "  ".join(f"{name:>13s}" for name, _ in columns))
