@@ -77,6 +77,7 @@ def plan_columns(prefix: str, plan: BaselineResult, id_to_name: dict[int, str]) 
         "detour_ratio": fmt(plan.detour_ratio, 3),
         "hard_dist_mean_m": fmt(clearance[0] if clearance else None),
         "hard_dist_min_m": fmt(clearance[1] if clearance else None),
+        "roughness_m": fmt(plan.mean_roughness_m, 3)
     }
     for group, names in SUMMARY_GROUPS.items():
         share = sum(v for c, v in shares.items() if id_to_name.get(c) in names) if plan.found else None
@@ -92,7 +93,7 @@ def mean_of(rows: list[dict], column: str) -> float:
 
 def print_comparison(rows: list[dict]):
     """Per category: baseline -> hybrid for reached, shortfall, detour, and the class shares."""
-    columns = [("reached", None), ("short m", "shortfall_m"), ("detour", "detour_ratio"), ("hard m", "hard_dist_mean_m"),
+    columns = [("reached", None), ("short m", "shortfall_m"), ("detour", "detour_ratio"), ("hard m", "hard_dist_mean_m"), ("rough m", "roughness_m"),
                *[(f"{g} %", f"share_{g}") for g in SUMMARY_GROUPS]]
     print(f"\n{'category':9s} {'frames':>6s} {'apart m':>7s} {'max m':>6s}  "
           + "  ".join(f"{name:>13s}" for name, _ in columns))
