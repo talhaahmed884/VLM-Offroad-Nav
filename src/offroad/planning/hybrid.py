@@ -7,6 +7,7 @@ paths comes from the VLM's hints and route alone.
 
 from dataclasses import dataclass
 
+import time
 import numpy as np
 
 from offroad.fusion.grid_lookup import GridLookup, build_grid_lookup
@@ -30,6 +31,8 @@ class HybridResult:
     hybrid: BaselineResult
     fused: FusedCostMap
     lookup: GridLookup
+    baseline_seconds: float = 0.0
+    hybrid_plan_seconds: float = 0.0
 
     @property
     def path_changed(self) -> bool:
