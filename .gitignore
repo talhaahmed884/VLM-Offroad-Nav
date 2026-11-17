@@ -18,3 +18,11 @@ venv/
 
 # OS
 .DS_Store
+
+# LaTeX
+tex_out
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
