@@ -69,6 +69,14 @@ STEPS = [
          ("scripts/show_fused_costmap.py", "--sequence", "1", "--frame", "2132"), slow=True),
     Step("hybrid", "phase 5: baseline vs hybrid planner on all 36 evaluation frames (needs saved VLM answers)",
          ("scripts/run_hybrid.py",), slow=True),
+    Step("truth", "phase 6: two-source ground truth along the baseline path for 00000/120",
+         ("scripts/check_path_truth.py", "--sequence", "0", "--frame", "120")),
+    Step("truth-eval", "phase 6: two-source ground-truth coverage on all 36 baseline paths",
+         ("scripts/check_path_truth.py",), slow=True),
+    Step("evaluate", "phase 6: baseline vs 4B / 8B / oracle hybrids, all metrics, all 36 frames",
+         ("scripts/evaluate.py",), slow=True),
+    Step("report", "phase 6: report tables and figures from outputs/eval (run 'evaluate' first)",
+         ("scripts/make_report.py",), slow=True),
 ]
 
 

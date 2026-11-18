@@ -77,7 +77,7 @@ class BaselineResult:
         """
         if not self.found:
             return None
-        heights = np.array([self.costmap.obstacle_heights[c] for c in self.path], dtype=float)
+        heights = np.array([self.costmap.obstacle_height[c] for c in self.path], dtype=float)
         known = heights[np.isfinite(heights)]
         return float(known.mean()) if known.size else None
 
@@ -105,6 +105,25 @@ class BaselineResult:
             return {}
         counts = Counter(int(self.labels[c]) for c in self.path)
         return {class_id: n / len(self.path) for class_id, n in counts.most_common()}
+
+    def hard_obstacle_distance(self, hard_class_ids: set[int] | list[int]) -> tuple[float, float] | None:
+        """Distance from the path to the nearest hard obstacle cell: (mean_m, min_m), None otherwise
+
+        hard class ids counted as hard obstacles and it returns None if there is no path or the map has no cells with those labels
+        """
+        if not self.found or not hard_class_ids:
+            return None
+        obstacles = np.argwhere(np.isin(self.labels, list(hard_class_ids)))
+        if len(obstacles) == 0:
+            return None
+        path_cells = np.array(self.path, dtype=float)
+        dists = np.hypot(
+                path_cells[:, None, 0] - obstacles[None, :, 0],
+                path_cells[:, None, 1] - obstacles[None, :, 1],
+        )
+        nearest_m = dists.min(axis=1) * self.spec.resolution
+
+        return float(nearest_m.mean()), float(nearest_m.min())
 
 
 def run_geometric_baseline(
@@ -167,22 +186,3 @@ def plan_on_cost(
         path=path,
         total_cost=total_cost,
     )
-
-def hard_obstacle_distance(self, hard_class_ids: set[int] | list[int]) -> tuple[float, float] | None:
-    """Distance from the path to the nearest hard obstacle cell: (mean_m, min_m), None otherwise
-
-    hard class ids counted as hard obstacles and it returns None if there is no path or the map has no cells with those labels
-    """
-    if not self.found or not hard_class_ids:
-        return None
-    obstacles = np.argwhere(np.isin(self.labels, list(hard_class_ids)))
-    if len(obstacles) == 0:
-        return None
-    path_cells = np.array(self.path, dtype=float)
-    dists = np.hypot(
-            path_cells[:, None, 0] - obstacles[None, :, 0],
-            path_cells[:, None, 1] - obstacles[None, :, 1],
-    )
-    nearest_m = dists.min(axis=1) * self.spec.resolution
-    
-    return float(nearest_m.mean()), float(nearest_m.min())

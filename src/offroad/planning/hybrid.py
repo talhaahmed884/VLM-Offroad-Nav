@@ -25,6 +25,9 @@ class HybridResult:
     baseline / hybrid: plans on the geometric and on the VLM-adjusted cost grid.
     fused: the VLM-adjusted cost map (hints, unblocked cells, route corridor).
     lookup: which image grid cell each map cell appears in.
+    baseline_seconds: time to build the maps and plan the baseline path.
+    hybrid_plan_seconds: extra time for the hybrid: grid lookup, re-weighting, and planning
+        (the VLM's own answer time is not included).
     """
 
     baseline: BaselineResult
@@ -74,16 +77,22 @@ def run_hybrid_planner(
         with no hints and no waypoints gives the same path as the baseline.
     The other arguments are as in `run_geometric_baseline`.
     """
+    plan_args = (params, goal_distance, footprint_radius, goal_cost_weight)
+    started = time.perf_counter()
     points_flu = lidar_to_flu(points_lidar)
     costmap = geometric_cost_map(points_flu, build_elevation_map(points_flu, spec), params)
     labels = majority_label_grid(points_flu, point_labels, spec, empty_label=UNSEEN)
+    baseline = plan_on_cost(costmap.cost, costmap, labels, *plan_args)
+    baseline_done = time.perf_counter()
+
     lookup = build_grid_lookup(costmap.ground_z, spec, T_cam_from_lidar, K, grid)
     fused = reweight_cost_map(costmap, lookup, answer["hints"], fusion, params, answer["waypoints"])
-
-    plan_args = (params, goal_distance, footprint_radius, goal_cost_weight)
+    hybrid = plan_on_cost(fused.cost, costmap, labels, *plan_args)
     return HybridResult(
-        baseline=plan_on_cost(costmap.cost, costmap, labels, *plan_args),
-        hybrid=plan_on_cost(fused.cost, costmap, labels, *plan_args),
+        baseline=baseline,
+        hybrid=hybrid,
         fused=fused,
         lookup=lookup,
+        baseline_seconds=baseline_done - started,
+        hybrid_plan_seconds=time.perf_counter() - baseline_done,
     )

@@ -25,7 +25,8 @@ PATH_RGB = (255, 0, 0)
 
 
 def draw_path_on_camera(
-    image: np.ndarray, calib: CameraCalibration, result: BaselineResult, color: tuple[int, int, int] = PATH_RGB
+    image: np.ndarray, calib: CameraCalibration, result: BaselineResult, color: tuple[int, int, int] = PATH_RGB,
+    radius: int = 6,
 ) -> np.ndarray:
     """Copy of the (H, W, 3) RGB image with the path drawn as dots (red by default) on the estimated ground.
 
@@ -43,7 +44,7 @@ def draw_path_on_camera(
     points_lidar = transform_points(invert_transform(T_FLU_FROM_LIDAR), points_flu)
     uv, _, _ = project_points_to_image(points_lidar, calib.T_cam_from_lidar, calib.K, image.shape[:2])
     colors = np.tile(np.array(color, dtype=np.uint8), (len(uv), 1))
-    return draw_points(image, uv, colors, radius=6)
+    return draw_points(image, uv, colors, radius=radius)
 
 
 def draw_baseline_figure(

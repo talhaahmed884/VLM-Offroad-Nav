@@ -1,6 +1,5 @@
 # Data and generated outputs (never committed)
 /data/
-outputs/
 
 # Python
 __pycache__/

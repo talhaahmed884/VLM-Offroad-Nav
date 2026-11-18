@@ -1,0 +1,61 @@
+{
+  "category": "rubble",
+  "sequence": "00004",
+  "frame": 556,
+  "model": "Qwen/Qwen3-VL-8B-Instruct",
+  "quantize": "4bit",
+  "image_size_sent": [
+    800,
+    1280
+  ],
+  "briefing": true,
+  "goal_cell": "F6",
+  "prompt": "You are the high-level route guide for an off-road ground vehicle (about 1.5 m wide). The image comes from its front camera.\n\nA grid is drawn on the image: rows A to H from top to bottom, columns 1 to 12 from left to right. Each cell's name (for example \"E7\") is printed in its top-left corner. The vehicle is just below the bottom edge of the image, under H6 and H7. Lower rows are closer to the vehicle; higher rows are farther away.\n\nDrive toward cell F6, about 20 m straight ahead.\n\nThe vehicle can drive through short and tall grass and small, soft bushes. It must not hit trees, logs, rocks, fences, people, vehicles, or deep water, and it can get stuck in mud and puddles, so avoid those when there is a reasonable alternative.\n\nLook carefully at this image, then answer with ONLY a JSON object, with no other text, in this format. Replace every <...> with your own values based on what you see; do not copy the placeholders.\n{\n  \"reasoning\": \"<one or two sentences: what you see ahead, and which way is best>\",\n  \"waypoints\": [\n    \"<nearest cell, in row H>\",\n    \"<next cell>\",\n    \"<cell closest to the goal>\"\n  ],\n  \"cost_hints\": [\n    {\n      \"cells\": [\n        \"<cell>\",\n        \"<cell>\"\n      ],\n      \"terrain\": \"<terrain word>\",\n      \"traversability\": \"<traversability word>\"\n    }\n  ]\n}\n\nRules:\n- \"reasoning\" comes first: one or two short sentences about the hazards ahead and which way is best.\n- \"waypoints\": 3 to 8 cells on drivable ground, ordered from the nearest (row H) to the goal. Consecutive waypoints should be in the same or neighbouring cells. Steer around water, mud, and obstacles unless there is no other way.\n- \"cost_hints\": at most 6 entries, each with at most 8 cells. Only mark ground cells that matter for the route: the hazards you mentioned (water, mud, rocks, trees, people, ...) and the ground you chose to drive on. Skip the sky, distant scenery, and cells far from the route. Each entry has \"cells\" (a list of cell names), \"terrain\" and \"traversability\".\n- \"terrain\" must be one of: dirt_or_gravel, short_grass, tall_grass_or_bush, mud, water, rocks, tree_or_log, other_obstacle, person_or_vehicle.\n- \"traversability\" must be one of: preferred, ok, caution, avoid, impassable (from best to worst).\n- Use only cell names that exist in the grid (A1 to H12).",
+  "raw_answer": "{\n  \"reasoning\": \"The path to F6 is clear through short grass, but avoid the rocks in row E and the tall grass/bushes on the right. Steer left to stay clear of potential hazards.\",\n  \"waypoints\": [\n    \"H6\",\n    \"G6\",\n    \"F6\"\n  ],\n  \"cost_hints\": [\n    {\n      \"cells\": [\n        \"E5\",\n        \"E6\",\n        \"E7\"\n      ],\n      \"terrain\": \"rocks\",\n      \"traversability\": \"avoid\"\n    },\n    {\n      \"cells\": [\n        \"F10\",\n        \"F11\",\n        \"F12\"\n      ],\n      \"terrain\": \"tall_grass_or_bush\",\n      \"traversability\": \"caution\"\n    }\n  ]\n}",
+  "seconds": 13.490314900001977,
+  "prompt_tokens": 1597,
+  "new_tokens": 175,
+  "answer": {
+    "valid": true,
+    "waypoints": [
+      "H6",
+      "G6",
+      "F6"
+    ],
+    "hints": [
+      {
+        "cell": "E5",
+        "terrain": "rocks",
+        "traversability": "avoid"
+      },
+      {
+        "cell": "E6",
+        "terrain": "rocks",
+        "traversability": "avoid"
+      },
+      {
+        "cell": "E7",
+        "terrain": "rocks",
+        "traversability": "avoid"
+      },
+      {
+        "cell": "F10",
+        "terrain": "tall_grass_or_bush",
+        "traversability": "caution"
+      },
+      {
+        "cell": "F11",
+        "terrain": "tall_grass_or_bush",
+        "traversability": "caution"
+      },
+      {
+        "cell": "F12",
+        "terrain": "tall_grass_or_bush",
+        "traversability": "caution"
+      }
+    ],
+    "reasoning": "The path to F6 is clear through short grass, but avoid the rocks in row E and the tall grass/bushes on the right. Steer left to stay clear of potential hazards.",
+    "issues": [],
+    "route_conflicts": []
+  }
+}

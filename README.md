@@ -235,6 +235,48 @@ python scripts/run_hybrid.py --oracle                          # "perfect" hints
 
 For every frame in `configs/eval_frames.csv` this plans the geometry-only path and the hybrid path. Both use the same goal choice and A*; only the cost grid differs, by the VLM's hints and route. It reads the saved VLM answers, so no GPU is needed. It saves one picture per frame to `outputs/hybrid/<run>/` (baseline red, hybrid cyan, VLM route dashed white) and `summary.csv` with both plans side by side, and prints a per-category "baseline → hybrid" table: target reached, shortfall, detour, and the share of the path on water, mud, and bush (from the LiDAR labels).
 
+## Ground truth along a path (evaluation)
+
+```bash
+python scripts/check_path_truth.py                            # coverage on all 36 baseline paths
+python scripts/check_path_truth.py --sequence 0 --frame 120   # one frame, with a picture
+```
+
+To judge a path we need the true class of every cell it crosses. Each path cell takes its class from the LiDAR point labels if it has points. Otherwise it uses the camera label image at the cell's ground pixel. Otherwise it stays unseen; it is marked occluded when a LiDAR point shows something standing in front of it in the camera. This prints how much of each baseline path each source covers, and the water / mud / bush shares from LiDAR alone versus both sources. The one-frame mode saves `outputs/path_truth_<seq>_<frame>.png`, with the path dots colored by source (green = LiDAR, blue = camera, orange = occluded, gray = unseen).
+
+## Evaluation: baseline vs hybrid on every metric
+
+```bash
+python scripts/evaluate.py                                          # baseline, 4B, 8B, oracle
+python scripts/evaluate.py --runs Qwen3-VL-8B-Instruct_4bit --no-oracle
+```
+
+This plans every evaluation frame with the geometry-only baseline and with the hybrid planner for each saved VLM run, plus the oracle hints. It scores every path with the proposal's metrics, on LiDAR + camera ground truth (see `src/offroad/eval/metrics.py`):
+- success: reached the target, or stopped within 2.5 m of a target blocked by a hard obstacle,
+- shortfall and detour,
+- % of the path through water and through mud,
+- compliant (grass, bush) and non-compliant (tree, log) vegetation,
+- mean and minimum distance to hard obstacles,
+- slope and bump height,
+- compute time per frame, and the VLM answer time.
+
+It writes `outputs/eval/per_frame.csv` and `outputs/eval/summary.csv`, and prints an overall table, a per-category table, and frame-by-frame wins / losses / ties of each hybrid against the baseline. No GPU is needed; it reads the saved answers.
+
+## Report tables and figures
+
+```bash
+python scripts/make_report.py   # after scripts/evaluate.py
+```
+
+This reads `outputs/eval/per_frame.csv` and writes `outputs/report/`:
+- `tables.md` and `tables.tex`: the overall, per-category, and frame-by-frame tables. The LaTeX version uses `booktabs`.
+- `fig_by_category.png`: six key metrics per category.
+- `fig_paired.png`: the frames where each hybrid is better or worse than the baseline.
+- `fig_latency.png`: geometry compute time vs VLM answer time.
+- `examples/`: a few frames with the baseline, 8B, and oracle paths drawn on the camera image and the top-down labels.
+
+The known limitations of the evaluation are listed in [`docs/limitations.md`](docs/limitations.md).
+
 ## Layout
 
 - `src/offroad/` — library code (data loading, geometry, visualization)
