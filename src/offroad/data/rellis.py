@@ -6,6 +6,7 @@ Expected layout under the dataset root (see CLAUDE.md, "Dataset on disk"):
         Rellis_3D_ontology/ontology.yaml
         00000/
             camera_info.txt, transforms.yaml
+            poses.txt                                   (one pose per scan; see load_poses)
             pylon_camera_node/frame000123-1581624652_750.jpg
             pylon_camera_node_label_id/frame000123-1581624652_750.png   (about every other frame)
             os1_cloud_node_kitti_bin/000123.bin
@@ -29,9 +30,11 @@ IMAGE_DIR = "pylon_camera_node"
 IMAGE_LABEL_DIR = "pylon_camera_node_label_id"
 LIDAR_DIR = "os1_cloud_node_kitti_bin"
 LIDAR_LABEL_DIR = "os1_cloud_node_semantickitti_label_id"
+POSES_FILE = "poses.txt"
 ONTOLOGY_PATH = Path("Rellis_3D_ontology") / "ontology.yaml"
 
 _IMAGE_NAME = re.compile(r"^frame(\d+)-.*\.jpg$")
+_IMAGE_TIME = re.compile(r"^frame\d+-(\d+)_(\d+)\.jpg$")
 
 
 def default_rellis_root() -> Path:
@@ -79,6 +82,32 @@ def load_lidar_labels(path: Path) -> np.ndarray:
     return (raw & 0xFFFF).astype(np.uint16)
 
 
+def load_poses(path: Path) -> np.ndarray:
+    """Read a RELLIS-3D poses.txt into (N, 4, 4) T_world_from_lidar, one per scan, in scan order.
+
+    Each line holds 12 numbers: a 3x4 [R | t] matrix, row by row (SemanticKITTI style). Checked
+    on 2026-11-22: these are the Ouster LiDAR's poses in a fixed world frame. Two scans 2-3 s
+    apart overlap 59-65% when moved to the world frame this way, versus 1-11% with the inverse,
+    and the vehicle moves along LiDAR -x (forward). The last line has no trailing newline in
+    some sequences, which np.loadtxt handles.
+    """
+    rows = np.loadtxt(path, dtype=float, ndmin=2)
+    if rows.shape[1] != 12:
+        raise ValueError(f"{path}: expected 12 numbers per line, got {rows.shape[1]}")
+    poses = np.tile(np.eye(4), (len(rows), 1, 1))
+    poses[:, :3, :] = rows.reshape(-1, 3, 4)
+    return poses
+
+
+def image_timestamp(path: Path) -> float:
+    """Capture time in seconds from an image name like frame000123-1581624652_750.jpg (-> 1581624652.750)."""
+    match = _IMAGE_TIME.match(Path(path).name)
+    if not match:
+        raise ValueError(f"Can't read a timestamp from {Path(path).name}")
+    seconds, fraction = match.groups()
+    return float(f"{seconds}.{fraction}")
+
+
 def load_ontology(root: Path | None = None) -> tuple[dict[int, str], dict[int, tuple[int, int, int]]]:
     """Read ontology.yaml and return ({class_id: name}, {class_id: (r, g, b)})."""
     root = Path(root) if root is not None else default_rellis_root()
@@ -103,6 +132,7 @@ class RellisSequence:
 
         self.calib = load_calibration(self.sequence_dir)
         self._image_paths = self._index_images()
+        self._poses: np.ndarray | None = None
 
     def _index_images(self) -> dict[int, Path]:
         """Map frame index -> image path, parsed from names like frame000123-<timestamp>.jpg."""
@@ -133,6 +163,26 @@ class RellisSequence:
     def has_label_image(self, index: int) -> bool:
         """True if this frame has a semantic label image (about every other frame does)."""
         return self.label_image_path(index).exists()
+
+    def timestamp(self, index: int) -> float:
+        """Capture time of this frame's image, seconds (from the image file name)."""
+        return image_timestamp(self._image_paths[index])
+
+    @property
+    def poses(self) -> np.ndarray:
+        """(N, 4, 4) T_world_from_lidar for every scan; poses[i] belongs to frame index i.
+
+        Loaded from poses.txt on first use (the "Ouster LiDAR Scan Poses files" download).
+        """
+        if self._poses is None:
+            path = self.sequence_dir / POSES_FILE
+            if not path.exists():
+                raise FileNotFoundError(f"{path} not found. Download 'Ouster LiDAR Scan Poses files' (see README).")
+            poses = load_poses(path)
+            if len(poses) != len(self._image_paths):
+                raise ValueError(f"{path}: {len(poses)} poses for {len(self._image_paths)} frames")
+            self._poses = poses
+        return self._poses
 
     def __getitem__(self, index: int) -> RellisFrame:
         if index not in self._image_paths:

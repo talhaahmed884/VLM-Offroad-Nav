@@ -45,7 +45,15 @@ STEPS = [
     # Needs requirements-vlm.txt and a GPU, so it only runs with --full or --only.
     Step("gpu", "check PyTorch, the GPU, and the VLM / fine-tuning libraries",
          ("scripts/check_gpu.py",), slow=True),
-    # Approach 2 steps are added here as each phase is built (see docs/approach-2-plan.md).
+    # Approach 2 (see docs/approach-2-plan.md).
+    Step("frames", "phase 1: choose the decision frames -> configs/decision_frames.csv",
+         ("scripts/build_decision_frames.py",)),
+    Step("driven", "phase 1: driven path from the poses for 00000/600",
+         ("scripts/show_driven_path.py", "--sequence", "0", "--frame", "600")),
+    Step("candidates", "phase 2: candidates + labels for every decision frame, strict vs relaxed (~2 min)",
+         ("scripts/build_candidates.py",)),
+    Step("show", "phase 2: candidates of 00000/601 on the camera image and the cost grids",
+         ("scripts/show_candidates.py", "--sequence", "0", "--frame", "601")),
 ]
 
 

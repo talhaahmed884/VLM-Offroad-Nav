@@ -93,21 +93,27 @@ def clear_footprint(cost: np.ndarray, spec: GridSpec, radius: float, free_cost: 
     return cleared
 
 
-def cost_to_come(cost: np.ndarray, start: Cell) -> np.ndarray:
-    """Cheapest path cost from start to every cell (Dijkstra; same moves and costs as `astar`).
+def shortest_path_tree(cost: np.ndarray, start: Cell) -> tuple[np.ndarray, np.ndarray]:
+    """Cheapest paths from start to every cell at once (Dijkstra; same moves and costs as `astar`).
 
-    Returns (nx, ny) float: inf for cells that cannot be reached. All inf if the start is blocked.
+    Returns (come, parent):
+        come: (nx, ny) cheapest path cost to each cell; inf where it can't be reached.
+        parent: (nx, ny, 2) int, the previous cell on that path; -1 for the start and unreachable cells.
+    One run gives the path to any goal via `path_from_tree`, which is much faster than one A* per goal.
     """
     nx, ny = cost.shape
     best = np.full(cost.shape, np.inf)
+    parent = np.full((nx, ny, 2), -1, dtype=int)
     if not np.isfinite(cost[start]):
-        return best
-    grid = cost.tolist()
-    best[start] = 0.0
+        return best, parent
+    grid = cost.tolist()  # plain Python lists are much faster to index in the loop
+    best_list = best.tolist()
+    best_list[start[0]][start[1]] = 0.0
+    parents: dict[Cell, Cell] = {}
     frontier = [(0.0, start)]
     while frontier:
         cost_so_far, (i, j) = heapq.heappop(frontier)
-        if cost_so_far > best[i, j]:
+        if cost_so_far > best_list[i][j]:
             continue  # an older, more expensive entry for this cell
         for di, dj, step in NEIGHBORS:
             ni, nj = i + di, j + dj
@@ -116,10 +122,47 @@ def cost_to_come(cost: np.ndarray, start: Cell) -> np.ndarray:
             if di and dj and (math.isinf(grid[ni][j]) or math.isinf(grid[i][nj])):
                 continue
             new_cost = cost_so_far + step * (grid[i][j] + grid[ni][nj]) / 2.0
-            if new_cost < best[ni, nj]:
-                best[ni, nj] = new_cost
+            if new_cost < best_list[ni][nj]:
+                best_list[ni][nj] = new_cost
+                parents[(ni, nj)] = (i, j)
                 heapq.heappush(frontier, (new_cost, (ni, nj)))
-    return best
+    for cell, previous in parents.items():
+        parent[cell] = previous
+    return np.array(best_list), parent
+
+
+def path_from_tree(parent: np.ndarray, goal: Cell) -> list[Cell]:
+    """Cells from the start to `goal`, read back from a `shortest_path_tree` parent array."""
+    path = [goal]
+    while True:
+        previous = tuple(int(v) for v in parent[path[-1]])
+        if previous[0] < 0:
+            return path[::-1]
+        path.append(previous)
+
+
+def cost_to_come(cost: np.ndarray, start: Cell) -> np.ndarray:
+    """Cheapest path cost from start to every cell (Dijkstra; same moves and costs as `astar`).
+
+    Returns (nx, ny) float: inf for cells that cannot be reached. All inf if the start is blocked.
+    """
+    return shortest_path_tree(cost, start)[0]
+
+
+def goal_from_costs(come: np.ndarray, spec: GridSpec, x: float, y: float, cost_weight: float) -> Cell | None:
+    """The `choose_goal` rule on an already computed cost-to-come grid (see `choose_goal`)."""
+    reachable = np.isfinite(come)
+    if not reachable.any():
+        return None
+    xs = spec.x_min + (np.arange(spec.shape[0]) + 0.5) * spec.resolution
+    ys = spec.y_min + (np.arange(spec.shape[1]) + 0.5) * spec.resolution
+    shortfall = np.hypot(xs[:, None] - x, ys[None, :] - y)
+    # Score only reachable cells: multiplying an unreachable cell's inf cost by a weight of 0
+    # would give NaN, which argmin would pick.
+    score = np.full(come.shape, np.inf)
+    score[reachable] = shortfall[reachable] + cost_weight * come[reachable] * spec.resolution
+    i, j = np.unravel_index(np.argmin(score), come.shape)
+    return int(i), int(j)
 
 
 def choose_goal(
@@ -134,19 +177,7 @@ def choose_goal(
     worth up to 10 m of extra smooth driving. With cost_weight = 0 it is simply the closest
     reachable cell. None only if the start cell is blocked.
     """
-    come = cost_to_come(cost, start)
-    reachable = np.isfinite(come)
-    if not reachable.any():
-        return None
-    xs = spec.x_min + (np.arange(spec.shape[0]) + 0.5) * spec.resolution
-    ys = spec.y_min + (np.arange(spec.shape[1]) + 0.5) * spec.resolution
-    shortfall = np.hypot(xs[:, None] - x, ys[None, :] - y)
-    # Score only reachable cells: multiplying an unreachable cell's inf cost by a weight of 0
-    # would give NaN, which argmin would pick.
-    score = np.full(cost.shape, np.inf)
-    score[reachable] = shortfall[reachable] + cost_weight * come[reachable] * spec.resolution
-    i, j = np.unravel_index(np.argmin(score), cost.shape)
-    return int(i), int(j)
+    return goal_from_costs(cost_to_come(cost, start), spec, x, y, cost_weight)
 
 
 def path_length(path: list[Cell], spec: GridSpec) -> float:

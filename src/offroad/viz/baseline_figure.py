@@ -9,7 +9,7 @@ import numpy as np
 from offroad.data.calibration import CameraCalibration
 from offroad.geometry.projection import project_points_to_image, transform_points
 from offroad.geometry.transforms import invert_transform
-from offroad.mapping.elevation import T_FLU_FROM_LIDAR
+from offroad.mapping.elevation import T_FLU_FROM_LIDAR, GridSpec
 from offroad.planning.baseline import BaselineResult
 from offroad.viz.overlay import draw_points
 from offroad.viz.topdown import (
@@ -24,27 +24,54 @@ from offroad.viz.topdown import (
 PATH_RGB = (255, 0, 0)
 
 
-def draw_path_on_camera(
-    image: np.ndarray, calib: CameraCalibration, result: BaselineResult, color: tuple[int, int, int] = PATH_RGB,
+def draw_xy_path_on_camera(
+    image: np.ndarray,
+    calib: CameraCalibration,
+    path_xy: np.ndarray,
+    ground_z: np.ndarray,
+    spec: GridSpec,
+    color: tuple[int, int, int] = PATH_RGB,
     radius: int = 6,
 ) -> np.ndarray:
-    """Copy of the (H, W, 3) RGB image with the path drawn as dots (red by default) on the estimated ground.
+    """Copy of the (H, W, 3) RGB image with an FLU path (M, 2+) drawn as dots on the estimated ground.
 
-    Path cells with unknown ground height (e.g. the blind circle around the vehicle) take
-    the height of the nearest path cells that have one, so the dots stay on the ground
-    even on slopes. If no path cell has a known ground height, the image is returned unchanged.
+    ground_z: (nx, ny) ground height per map cell (NaN = unknown), e.g. `CostMap.ground_z`.
+    Path points with unknown ground (e.g. the blind circle around the vehicle) take the height
+    of the nearest path points that have one, so the dots stay on the ground even on slopes.
+    Points outside the map or with no known ground anywhere along the path are not drawn.
     """
-    z = np.array([result.costmap.ground_z[c] for c in result.path])
+    xy = np.asarray(path_xy, dtype=float)[:, :2]
+    nx, ny = spec.shape
+    z = np.full(len(xy), np.nan)
+    for k, (x, y) in enumerate(xy):
+        i, j = spec.cell_index(x, y)
+        if 0 <= i < nx and 0 <= j < ny:
+            z[k] = ground_z[i, j]
     known = ~np.isnan(z)
     if not known.any():
         return image
     steps = np.arange(len(z))
     z = np.interp(steps, steps[known], z[known])  # also holds the end values constant beyond the known ones
-    points_flu = np.column_stack([result.path_xy(), z])
-    points_lidar = transform_points(invert_transform(T_FLU_FROM_LIDAR), points_flu)
+    return draw_flu_points_on_camera(image, calib, np.column_stack([xy, z]), color, radius)
+
+
+def draw_flu_points_on_camera(
+    image: np.ndarray, calib: CameraCalibration, points_flu: np.ndarray, color: tuple[int, int, int] = PATH_RGB,
+    radius: int = 6,
+) -> np.ndarray:
+    """Copy of the (H, W, 3) RGB image with FLU points (M, 3; meters) drawn as dots; points out of view are skipped."""
+    points_lidar = transform_points(invert_transform(T_FLU_FROM_LIDAR), np.asarray(points_flu, dtype=float))
     uv, _, _ = project_points_to_image(points_lidar, calib.T_cam_from_lidar, calib.K, image.shape[:2])
     colors = np.tile(np.array(color, dtype=np.uint8), (len(uv), 1))
     return draw_points(image, uv, colors, radius=radius)
+
+
+def draw_path_on_camera(
+    image: np.ndarray, calib: CameraCalibration, result: BaselineResult, color: tuple[int, int, int] = PATH_RGB,
+    radius: int = 6,
+) -> np.ndarray:
+    """Copy of the (H, W, 3) RGB image with a planned path drawn as dots (red by default) on the estimated ground."""
+    return draw_xy_path_on_camera(image, calib, result.path_xy(), result.costmap.ground_z, result.spec, color, radius)
 
 
 def draw_baseline_figure(

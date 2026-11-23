@@ -5,7 +5,16 @@ import math
 import numpy as np
 
 from offroad.mapping.elevation import GridSpec
-from offroad.planning.astar import astar, choose_goal, clear_footprint, cost_to_come, path_length
+from offroad.planning.astar import (
+    astar,
+    choose_goal,
+    clear_footprint,
+    cost_to_come,
+    goal_from_costs,
+    path_from_tree,
+    path_length,
+    shortest_path_tree,
+)
 
 INF = math.inf
 
@@ -134,3 +143,32 @@ def test_choose_goal_none_when_start_blocked():
 
 def test_path_length_in_meters():
     assert math.isclose(path_length([(0, 0), (1, 0), (2, 1)], SPEC), 0.5 + 0.5 * math.sqrt(2))
+
+
+def test_shortest_path_tree_gives_the_astar_path_cost():
+    cost = np.ones((6, 6))
+    cost[3, :5] = INF  # a wall with a gap at the far end
+    come, parent = shortest_path_tree(cost, (0, 0))
+    path = path_from_tree(parent, (5, 0))
+    assert path[0] == (0, 0) and path[-1] == (5, 0)
+    assert all(np.isfinite(cost[c]) for c in path)
+    _, astar_total = astar(cost, (0, 0), (5, 0))
+    assert math.isclose(come[5, 0], astar_total)
+    assert np.allclose(come, cost_to_come(cost, (0, 0)))
+
+
+def test_shortest_path_tree_marks_unreachable_cells():
+    cost = np.ones((4, 4))
+    cost[2, :] = INF
+    come, parent = shortest_path_tree(cost, (0, 0))
+    assert np.isinf(come[3, 3]) and tuple(parent[3, 3]) == (-1, -1)
+    assert tuple(parent[0, 0]) == (-1, -1)  # the start has no parent
+    assert path_from_tree(parent, (0, 0)) == [(0, 0)]
+
+
+def test_goal_from_costs_matches_choose_goal():
+    cost = np.ones(SPEC.shape)
+    cost[4, :] = INF
+    come = cost_to_come(cost, (0, 0))
+    assert goal_from_costs(come, SPEC, 1.25, 1.25, 0.1) == choose_goal(cost, SPEC, (0, 0), 1.25, 1.25, 0.1)
+    assert goal_from_costs(np.full(SPEC.shape, np.inf), SPEC, 1.0, 1.0, 0.1) is None

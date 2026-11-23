@@ -146,9 +146,62 @@ python scripts/build_cost_map.py --sequence 0 --frame 0       # geometry-only co
 python scripts/plan_path.py --sequence 0 --frame 0            # A* path toward a target 20 m ahead
 ```
 
-Each saves a picture to `outputs/` (gitignored). The approach 2 scripts (driven paths from the
-poses, candidate paths, the VLM selector, fine-tuning, and evaluation) are added phase by phase;
+Each saves a picture to `outputs/`. The approach 2 scripts below are added phase by phase;
 see [`docs/approach-2-plan.md`](docs/approach-2-plan.md).
+
+## Approach 2, phase 1: driven paths and decision frames
+
+```bash
+python scripts/build_decision_frames.py                     # -> configs/decision_frames.csv
+python scripts/show_driven_path.py --sequence 0 --frame 600 # the path the driver took from one frame
+```
+
+The scan poses give the LiDAR's position in a fixed world frame for every scan. Seen from one
+frame, the positions of the following frames trace the path the driver actually took next.
+This is the reference for "which candidate path matches the driver".
+
+`build_decision_frames.py` picks the frames where the VLM will be asked to decide, about 2 per
+second. It skips frames where the vehicle stands still or the recording ends within 20 m, and
+labels each frame with its split (by sequence: train 00000–00002, validation 00003, test 00004)
+and with Mode B's coarse direction ("bear left", "slight left", "straight", "slight right",
+"bear right"), taken from where the driver was about 50 m later. Only about every other frame
+has a camera label image, so a sampled frame without one is moved to its labelled neighbour
+(0.1 s away). The CSV is small and is committed, so everyone uses the same frames.
+
+`show_driven_path.py` saves `outputs/driven_<seq>_<frame>.png`. It has three panels: the
+camera image with the driven path drawn on the ground, the cost map with the driven path, and
+the whole drive seen from above. It prints how high the LiDAR rides above the mapped ground
+along the path (about 1.2 m), as a check that the poses and the LiDAR agree.
+
+## Approach 2, phase 2: candidate paths and their labels
+
+```bash
+python scripts/build_candidates.py                           # all decision frames, strict vs relaxed (~2 min)
+python scripts/build_candidates.py --every 10 --split val    # a quick look at a subset
+python scripts/show_candidates.py --sequence 0 --frame 601   # one frame's candidates, both variants
+```
+
+For each decision frame, a planner proposes up to 4 drivable paths about 15 m long that the VLM
+will choose between (as DriveVLN's planner does). It fans out toward 13 directions within the
+camera's view, finds the cheapest path toward each on a cost grid, smooths it, and keeps paths
+that are clearly different (at least 2 m apart somewhere). Two cost grids are compared:
+**strict** (approach 1's cost map: anything taller than 0.3 m, such as tall grass at a trail's
+edge, blocks) and **relaxed** (only hard obstacles taller than 1.5 m block; lower vegetation is
+passable but expensive).
+
+Each candidate gets labels automatically: does it match the driver (mean distance to the driven
+path ≤ 1 m, measured from 5 m on), and how far is it safe (the first water or hard obstacle
+along it, from the LiDAR and camera labels, rounded down to a tick at 5 / 10 / 15 m). Puddles
+are "caution", not unsafe, because the RELLIS driver drives through them; each candidate records
+where its first puddle is. A frame's correct action is "stop" when no candidate is safe to the
+first tick. These labels are only the answer key for training and scoring: the candidates come
+from LiDAR geometry alone, and the VLM sees only the camera image, so nothing needs labels at
+run time (e.g. in a closed-loop simulator).
+
+`build_candidates.py` writes `outputs/candidates/{strict,relaxed}.jsonl` (one line per frame)
+and a comparison table, `outputs/candidates/comparison.md`, per split. `show_candidates.py`
+saves `outputs/candidates_<seq>_<frame>.png`: the candidates on the camera image (white dots at
+the ticks, the driven path in cyan) and on both cost grids from above.
 
 ## Layout
 
@@ -157,10 +210,12 @@ see [`docs/approach-2-plan.md`](docs/approach-2-plan.md).
   - `geometry/`: transforms and LiDAR-to-camera projection
   - `mapping/`: elevation map and geometric cost map
   - `planning/`: A\* and the geometric baseline
+  - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels
   - `vlm/`: running a local VLM (Transformers)
   - `eval/`: ground truth along a path (LiDAR + camera labels) and safety metrics
   - `viz/`: pictures
 - `scripts/`: runnable entry points
 - `tests/`: pytest tests (run `pytest` from the repo root; no dataset needed)
+- `configs/`: the decision frames (`decision_frames.csv`)
 - `docs/`: the approach 2 plan
-- `outputs/`: generated images and tables (gitignored)
+- `outputs/`: generated images and tables (not meant to be committed)

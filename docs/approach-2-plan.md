@@ -112,7 +112,8 @@ as needed; the originals stay on the `approach-1-vlm-grid-costmap` branch.
    - **driver's candidate:** the candidate closest to the driven path; candidates within a
      tolerance (e.g. ≤ 1 m mean distance) also count, so frames with several equivalent paths
      aren't scored as wrong;
-   - **safe distance per candidate:** the first water / puddle or hard-obstacle cell along it,
+   - **safe distance per candidate:** the first water or hard-obstacle cell along it (puddles
+     are "caution" since 2026-11-22, see setting 6),
      from the two-source ground truth, rounded to a tick;
    - **stop:** true when every candidate is unsafe within the first tick;
    - **Mode B direction:** the bearing of the driven path ~50 m ahead, binned into a few words.
@@ -130,6 +131,26 @@ Each phase ends in something we can run and check, as in approach 1.
 - Frame builder (pure + tests): sample decision frames at ~2 Hz, compute each frame's driven path
   in the vehicle frame and its Mode B direction word; write the split files.
 
+**Status (2026-11-22): done; the user ran it and reviewed the picture.**
+- **Poses checked:** `poses.txt` has one 3×4 matrix per scan (two files lack a final newline, so
+  `wc -l` shows one fewer). They are `T_world_from_lidar`: two scans 2–3 s apart overlap 59–65%
+  after moving them to the world frame this way, versus 1–11% with the inverse. The vehicle moves
+  along LiDAR −x at about 1.25 m/s, and the drives are 226–483 m long. Along the driven path the
+  LiDAR stays about 1.2 m above the mapped ground (00000/600: 1.16–1.28 m), so the poses' heights
+  agree with the LiDAR ground.
+- **Decision frames:** 2,220 (train 1,553 / val 336 / test 331), after skipping frames where
+  the vehicle stands still (91) or the recording ends within 20 m (308). Mode B directions are
+  mostly "straight" (train 862 of 1,553; val 256 of 336; test 250 of 331). The test drive has
+  only 3 "bear left" and 0 "bear right" frames, so Mode B results on test will mainly show the
+  slight turns; report per word.
+- **Early warning for phase 2:** in 00000/2042 the driven trail beyond ~15 m runs through cells
+  the cost map marks as blocked (grass and brush along the trail edges). Candidates from the cost
+  map may not follow real trails there; phase 2's candidate-quality check will tell.
+- **Added in phase 2:** only about every other frame has a camera label image, and the safe-distance
+  labels need it, so each sampled frame now moves to a labelled neighbour (0.1 s away) when it has
+  none (`prefer_labelled`). 2,207 of the 2,220 decision frames have one (13 have no labelled
+  neighbour); the CSV gained a `labelled` column. The frame count and directions are unchanged.
+
 ### Phase 2: candidate paths and labels (the planning module)
 - **K diverse, feasible candidates** per frame from the LiDAR cost map: end points on an arc
   ~15 m ahead at bearings from −60° to +60°, A\* to each, near-duplicates dropped (paths less than
@@ -142,6 +163,77 @@ Each phase ends in something we can run and check, as in approach 1.
   shapes (straight, gentle/sharp left/right) built by clustering the recorded drives, placed in
   front of the vehicle and kept only if they don't hit obstacles. This is closer to DriveVLN's planner.
 
+**Status (2026-11-22): done and verified by the user's run (see the end of this section).** The user asked
+to build two cost grids and compare them ("strict" = approach 1's cost map, where anything over
+0.3 m blocks; "relaxed" = only hard obstacles over 1.5 m block, lower vegetation costs 10).
+- **How candidates are made** (`nav/candidates.py`): one Dijkstra shortest-path tree per frame;
+  a fan of 13 bearings (−30° … +30°, every 5°) at 15 m; for each, the goal that trades closeness
+  to the target against cost (the baseline's rule); smoothed, resampled every 0.25 m, cut at 15 m.
+  Changes from the first sketch above, found on real frames:
+  - **Camera view:** the camera sees only about ±19°, so ±60° candidates were invisible to the
+    VLM. A candidate must now keep ≥ 80% of its points from 5 m on inside the view (2° margin).
+  - **Duplicates:** "mean distance < 1.5 m" merged paths that share the trail for 7 m and then
+    split 3–4 m apart. Two paths are now different if they get ≥ 2 m apart somewhere (compared
+    point by point at the same distance along them). On a sample this raised the strict / relaxed
+    mean from 1.3 / 1.5 to 2.2 / 3.1 candidates.
+- **Labels** (`nav/labels.py`, `nav/frame_candidates.py`):
+  - The driver match is measured from the first tick (5 m) on; with the shared, invisible start
+    included, nearly every candidate "matched". The driver's choice is the closest candidate.
+  - A hard-obstacle label counts only where the LiDAR also sees something taller than 0.3 m in or
+    next to the cell: RELLIS marks some flat ground as "person" (people walking near the vehicle
+    smear onto the ground in the annotation). An unsafe stretch must be ≥ 0.5 m (2 points) long.
+  - The driven path is labelled like a candidate, as a check on the labels.
+- **Trial run, all 2,220 frames (~2 min with 4 workers):**
+
+  | | strict | relaxed |
+  |---|---|---|
+  | candidates per frame (mean) | 2.20 | 3.13 |
+  | frames with 0 / 1 / 2 / 3 / 4 | 4 / 22 / 36 / 29 / 10% | 1 / 4 / 17 / 36 / 42% |
+  | best candidate to driven path, median / 90th pct | 0.61 / 1.14 m | 0.68 / 1.34 m |
+  | driver match (a candidate within 1 m) | 83% | 83% |
+  | matching candidates per frame | 1.24 | 1.34 |
+  | real choice (2+ safe to tick 1) | 75% | 95% |
+  | stop | 6% | 2% |
+  | full length | 86% | 98% |
+  | candidates through a puddle (caution) | 9% | 8% |
+  | driver's candidate through a puddle / of those, with a dry alternative | 9% / 21% | 9% / 42% |
+
+  (Numbers with puddles as caution. With puddles unsafe, the first run gave real choice 72 / 92%
+  and stop 8 / 4%.)
+
+  - The ~17% of frames with no match are mostly sharp turns: the driver's path leaves the
+    camera's view (53–63 of ~95 misses in a sample); the rest miss by 1.0–1.3 m.
+  - Relaxed candidates almost never cross vegetation (cost per m ≤ 3.4); they gain options
+    because vegetation isn't inflated, e.g. the left rut, the trail, and a branch into tall grass.
+  - **Puddles:** the driver drives through puddles. With puddles unsafe, the labels called the
+    driver's own path unsafe in 6% of frames (137 puddle, 4 person), and in most "stop" frames
+    the driver kept going (150 of 183 strict, 50 of 79 relaxed). **User decision 2026-11-22:
+    puddles are "caution"**: they don't shorten the safe distance or cause "stop", but each
+    candidate records where its first puddle is (`first_caution_m`). Now the driver's own path
+    is safe to the end in 100% of frames; the driver goes through a puddle in 6% of them.
+  - **"Stop" on RELLIS is only planner failure.** All remaining stop frames (129 strict, 35
+    relaxed) have no candidates or only candidates that end before 5 m, and the driver kept
+    going in every one. RELLIS has no situation where the driver really had to stop, so stop
+    can't be evaluated meaningfully here; it needs the simulator (phase 6). Phase 3–4 should
+    decide whether to leave these frames out of the stop metrics.
+  - **Safe distance is nearly always "all"** (96% of relaxed candidates); the unsafe ones are
+    trees (83), "person" (19) and rubble (11). Safety on RELLIS will mostly show in the caution
+    metric: in relaxed, 42% of the frames where the driver's candidate crosses a puddle (~85
+    frames) also have a dry candidate. This makes balancing in phase 5 important.
+- **User decision 2026-11-22: the relaxed cost grid** is used from phase 3 on
+  (`CHOSEN_VARIANT`): more and more distinct candidates (3.1 vs 2.2 per frame, real choice 95%
+  vs 75%) with the same driver match (83%). `build_candidates.py` still builds both, for the report.
+- **User decision 2026-11-22: keep the 1 m match tolerance** (setting 5, measured from 5 m on;
+  ~1.3 matching candidates per frame). Training uses the single closest candidate as the
+  driver's choice; the tolerance only makes scoring forgiving of near-identical choices.
+- **Verified 2026-11-22: phase 2 is done.** The user ran `run_all.py`; `configs/decision_frames.csv`,
+  both JSONL files and `comparison.md` are byte-identical to my trial run.
+- **Notes for phase 3's picture** (from `outputs/candidates_00000_000601.png`): at 10–15 m the
+  candidates are squeezed into a thin band of image rows and cross each other near the bottom;
+  their far ends show small hooks and wiggles because each dot sits on its own map cell's
+  ground height. Draw them as lines on a smoothed ground (e.g. a plane fitted under the path, or
+  the pose height minus the sensor height as `show_driven_path.py` does), with ticks that stand out.
+
 ### Phase 3: visual prompt and zero-shot selector
 - Draw the candidates on the front camera image in distinct colors that stand out from grass and
   sky, each with a name at its end and numbered ticks at 5 / 10 / 15 m. Paths start below the
@@ -150,11 +242,19 @@ Each phase ends in something we can run and check, as in approach 1.
 - **History:** the last few decisions as a short text summary (cheap on memory), with earlier
   images as an option if memory allows.
 - Run zero-shot with **Qwen3-VL-4B** on the laptop; the existing 8B as a reference point.
+- **Against shortcuts** (user decision 2026-11-22, see section 8): assign the colors to the
+  candidates at random (and list them in the prompt in random order, not left to right); draw all
+  candidates in the same style (same line width and dot size); no costs or other planner numbers
+  in the prompt. The model should tell the candidates apart only by color and what it sees.
+- **History:** prompts are built so the history can be left out, and evaluated both with and
+  without it (see phase 4).
 
 ### Phase 4: evaluation
-- **Baselines:** random choice; the geometric choice (lowest-cost candidate); "follow the
-  direction" without vision (the candidate closest to the Mode B bearing); and the **oracle**
-  (always a correct candidate, always correct safe distances).
+- **Baselines:** random choice; the geometric choice (lowest-cost candidate); the straightest
+  candidate; "always all safe, continue"; "follow the direction" without vision (the candidate
+  closest to the Mode B bearing); and the **oracle** (always a correct candidate, always correct
+  safe distances). On trails, the straightest or cheapest candidate is often right, so the VLM
+  must beat these to show it reads the image rather than a shortcut.
 - **Per-frame metrics:**
   - path choice: water / mud / vegetation on the chosen path, collision proxy (crosses
     hard-obstacle points), clearance; and in Mode B, agreement with the driver and L2 error
@@ -163,7 +263,14 @@ Each phase ends in something we can run and check, as in approach 1.
     calls an unsafe stretch safe (the dangerous error);
   - stop: precision and recall of "stop".
 - Report results separately for **frames with a real choice**, since many off-road frames have
-  only one sensible path.
+  only one sensible path, and **per answer type** (e.g. how many true "stop" frames it catches,
+  how many unsafe stretches it calls unsafe), not just overall accuracy: "always all safe,
+  continue" is right most of the time.
+- **Does it follow the direction?** (Mode B) Ask the same frame with different direction words
+  ("bear left", then "bear right"); where a matching candidate exists, the choice should change.
+- **Does it lean on the history?** Evaluate with and without the history, and with a wrong
+  earlier decision in it. In closed loop the history holds the model's own (possibly wrong)
+  decisions, not the driver's.
 - **Comparison with approach 1:** score approach 1's baseline and hybrid paths with the same
   safety metrics (and driven-path L2) on the same test frames.
 
@@ -173,7 +280,27 @@ Each phase ends in something we can run and check, as in approach 1.
   accumulation, gradient checkpointing, 800×600 images (as DriveVLN), a mix of Mode A and Mode B
   examples, shuffled color assignment (so the model can't learn "always blue"), and paraphrased
   instructions.
-- Compare zero-shot vs fine-tuned on the test sequence, in both modes.
+- **Against overfitting** (user decision 2026-11-22, see section 8):
+  - **History dropout:** in some training examples leave the history out, and in some put a
+    wrong earlier decision in it, so the model doesn't learn "repeat the last answer" (in the
+    training data the history comes from the driver, who is almost always right).
+  - **Balance:** most frames are "straight", ~90% of candidates are "safe all", and "stop" is
+    rare (~4%). Use the rare frames (turns, unsafe candidates, stop) more often and the easy
+    straight ones less, so the model can't score well by always answering "all safe, continue".
+  - **Mirroring:** flip the image left-right, mirror the candidates, and swap left / right in
+    the Mode B word. This doubles the turn data (the test drive has no "bear right" frames, and
+    training has fewer right turns than left).
+  - **Photometric augmentation:** small random changes of brightness, contrast, color, and blur,
+    so the model doesn't fit RELLIS's look (simulator images look different).
+  - **Few epochs, early stopping:** frames 0.5 s apart on the same trail are near-duplicates, so
+    the ~1,550 training frames hold far fewer distinct examples than it seems. Validate on 00003,
+    stop when it stops improving, and use the test drive (00004) only for the final numbers.
+  - **Skip uncertain frames:** leave out frames where most of the candidates' ground has no
+    ground truth.
+- Compare zero-shot vs fine-tuned on the test sequence, in both modes. Zero-shot can't have
+  overfit RELLIS, so it's the reference for how much fine-tuning helps outside it.
+- **Check general ability:** after fine-tuning, run a few non-RELLIS images (e.g. from the
+  simulator) to make sure the model still judges drivable ground sensibly.
 - **Optional afterwards:** GRPO with a per-frame reward (choice safety + agreement with the
   driver + tick accuracy), which needs no simulator. DriveVLN's route-level reward needs closed
   loop and is out of scope.
@@ -183,6 +310,16 @@ Each phase ends in something we can run and check, as in approach 1.
 ### Phase 6 (stretch): closed loop
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)
   would allow real closed-loop driving. Revisit only if the offline results call for it.
+- **What it needs:** an RGB camera (the VLM's input) and a LiDAR or other depth sensor mounted
+  roughly like RELLIS's (~1.2 m up), because the candidates come from the LiDAR cost map. The
+  simulator's own ground truth (collisions, water, distance covered) is used only to score runs.
+- **No labels at run time:** the RELLIS labels (and ours made from them) are only training
+  targets and the answer key for scoring. Candidates come from LiDAR geometry only, and the VLM
+  sees only the camera image with the candidates drawn on it, so the same pipeline runs in
+  closed loop without labels.
+- **Closed loop tests what open loop can't:** the training frames all lie on the driver's own
+  good path, so the model never sees a state where it has already drifted. In closed loop small
+  errors add up and lead to such states; this is the main thing a simulator run would measure.
 
 ## 6. Decisions
 
@@ -195,6 +332,8 @@ Each phase ends in something we can run and check, as in approach 1.
 4. **Model and fine-tuning:** Qwen3-VL-4B, QLoRA on the laptop. DriveVLN used Qwen2.5-VL-3B; the
    4B is the closest current model of that size, framed as a starting point for future work.
    8B decided after the 4B results (fine-tuning it would need the H200).
+5. **Cost grid for the candidates:** relaxed (only hard obstacles over 1.5 m block; lower
+   vegetation costs 10), chosen after the phase 2 comparison with the strict grid.
 
 **Settings (the recommended defaults, accepted 2026-11-22):**
 
@@ -205,7 +344,7 @@ Each phase ends in something we can run and check, as in approach 1.
 | 3 | Branch | `approach-2-mapless-vln`, from `main` |
 | 4 | Candidates | up to 4 per frame, about 15 m long, ticks at 5 / 10 / 15 m |
 | 5 | "Driver's path" | candidates within 1 m mean distance of the driven path (several may count) |
-| 6 | Unsafe | water / puddle or a hard obstacle (approach 1's classes); mud and grass count as safe |
+| 6 | Unsafe | water or a hard obstacle (approach 1's classes; a hard obstacle only where the LiDAR sees something standing); mud and grass count as safe. **Puddles are "caution"** (changed 2026-11-22: the driver drives through them): recorded and scored as "puddle on the chosen path when a dry candidate existed", but not unsafe |
 | 7 | Stop is correct | every candidate is unsafe before its first tick (5 m) |
 | 8 | Mode B directions | "bear left", "slight left", "straight", "slight right", "bear right", from the driven path ~50 m ahead |
 | 9 | History | the last 3 decisions as a short text summary |
@@ -231,3 +370,24 @@ Each phase ends in something we can run and check, as in approach 1.
 - **Latency:** about 10–14 s per answer on the laptop. Fine offline; a real vehicle would need a
   faster model or fewer decisions.
 - **The blind zone and cost-map limits** carry over, since the candidates come from the same cost map.
+
+## 8. Safeguards against overfitting and shortcuts (agreed 2026-11-22)
+
+The user's concern: the model must not learn things that won't hold in a closed-loop simulator,
+where there are no labels and its own mistakes shape what it sees next. Where each one goes:
+
+| Safeguard | Why | Phase |
+|---|---|---|
+| Labels only as targets / answer key, never as input | They don't exist in closed loop | 2 (done: candidates use LiDAR geometry only) |
+| Random color assignment and prompt order, same drawing style, no costs in the prompt | So it can't learn "red is usually right" or "pick the middle one" | 3 and 5 |
+| Simple baselines: random, straightest, cheapest, always "all safe, continue" | The VLM must beat them to show it reads the image | 4 |
+| Results per answer type (stop recall, unsafe calls) | Overall accuracy hides "always continue" | 4 |
+| Same frame with different direction words | Checks it follows the instruction | 4 |
+| History dropout and wrong history; evaluate with and without | In closed loop the history holds its own mistakes | 3, 4, 5 |
+| Balanced training data (more turns, unsafe, stop) | Most frames are easy and straight | 5 |
+| Mirroring with left / right swapped | Doubles turns; test has no "bear right" | 5 |
+| Brightness / color / blur augmentation | Simulator images look different from RELLIS | 5 |
+| Few epochs, early stopping on 00003, test 00004 only at the end | Neighbouring frames are near-duplicates | 5 |
+| Skip frames with mostly unknown ground | Don't train on guesses | 5 |
+| Zero-shot reported next to fine-tuned; a few non-RELLIS images after fine-tuning | Shows what fine-tuning changes outside RELLIS | 5 |
+| Puddles as caution, not unsafe | Labels that contradict the driver teach RELLIS habits, not driving | 2 (done 2026-11-22) |
