@@ -64,6 +64,9 @@ STEPS = [
          ("scripts/score_vlm.py",), slow=True),
     Step("gridmap", "phase 5: image grid cells on the top-down map for 00000/120",
          ("scripts/show_grid_on_map.py", "--sequence", "0", "--frame", "120")),
+    Step("drivevln-one", [sys.executable, "scripts/run_drivevln.py", "--sequence", 
+         "0", "--frame", "120"], slow=True),
+    Step("drivevln", [sys.executable, "scripts/run_drivevln.py"], slow=True),
     # Needs a saved VLM answer for the frame (outputs/vlm_runs/...), so it runs with --full or --only.
     Step("fused", "phase 5: cost map re-weighted by the VLM hints for 00001/2132 (tall grass)",
          ("scripts/show_fused_costmap.py", "--sequence", "1", "--frame", "2132"), slow=True),
