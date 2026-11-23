@@ -68,7 +68,6 @@ def _match_color(raw: str, valid_colors: dict[str, str]) -> str | None:
             return canonical
     return None
 
-
 def parse_selector_answer(text: str, available_colors: list[str]) -> SelectorAnswer:
     """Parse a VLM response into a SelectorAnswer. Never raises."""
     issues: list[str] = []
@@ -80,26 +79,20 @@ def parse_selector_answer(text: str, available_colors: list[str]) -> SelectorAns
     if not valid_colors:
         return SelectorAnswer(selected_color=None, reasoning="", issues=["no available colors provided"])
 
-    # 1. Try JSON parsing first.
-    json_str = extract_json(text)
-    if json_str is not None:
-        try:
-            data = json.loads(json_str)
-            if isinstance(data, dict):
-                reasoning = str(data.get("reasoning", "")).strip()
-                raw_choice = data.get("selected_color") or data.get("color") or data.get("choice")
-                if raw_choice is None:
-                    issues.append("JSON missing 'selected_color' field")
-                else:
-                    matched = _match_color(str(raw_choice), valid_colors)
-                    if matched is not None:
-                        return SelectorAnswer(selected_color=matched, reasoning=reasoning, issues=issues)
-                    issues.append(f"invalid selected_color {raw_choice!r}; expected one of {available_colors}")
-                    return SelectorAnswer(selected_color=None, reasoning=reasoning, issues=issues)
-        except json.JSONDecodeError as exc:
-            issues.append(f"JSON decode error: {exc.msg}")
-    else:
-        issues.append("no JSON object found; attempting text fallback")
+    # 1. Try JSON parsing via extract_json -> (dict | None, list[str]).
+    data, json_issues = extract_json(text)
+    issues.extend(json_issues)
+    if isinstance(data, dict):
+        reasoning = str(data.get("reasoning", "")).strip()
+        raw_choice = data.get("selected_color") or data.get("color") or data.get("choice")
+        if raw_choice is None:
+            issues.append("JSON missing 'selected_color' field")
+        else:
+            matched = _match_color(str(raw_choice), valid_colors)
+            if matched is not None:
+                return SelectorAnswer(selected_color=matched, reasoning=reasoning, issues=issues)
+            issues.append(f"invalid selected_color {raw_choice!r}; expected one of {available_colors}")
+            return SelectorAnswer(selected_color=None, reasoning=reasoning, issues=issues)
 
     # 2. Fallback: check <answer>...</answer> tag (DriveVLN format) or full text.
     tag_match = re.search(r"<answer>(.*?)</answer>", text, flags=re.IGNORECASE | re.DOTALL)
@@ -113,7 +106,6 @@ def parse_selector_answer(text: str, available_colors: list[str]) -> SelectorAns
         )
     ]
     if found:
-        # Take the last mentioned color (usually the final conclusion).
         return SelectorAnswer(selected_color=found[-1], reasoning=text.strip(), issues=issues)
 
     issues.append(f"could not find any available color {available_colors} in response")
