@@ -1,4 +1,4 @@
-# Extra packages for running the VLM locally (phase 4 onward), on top of requirements.txt.
+# Extra packages for running and fine-tuning the VLM locally, on top of requirements.txt.
 #
 # 1. Install PyTorch first, with the CUDA 12.8 build (needed for RTX 50-series GPUs; works on
 #    older NVIDIA GPUs too). Same command on Windows and Linux:
@@ -9,4 +9,6 @@
 #      python scripts/check_gpu.py
 transformers==5.22.1
 accelerate==1.15.0
-bitsandbytes==0.50.2
+bitsandbytes==0.50.2   # 4-bit / 8-bit models (inference and QLoRA fine-tuning)
+peft==0.22.0           # LoRA adapters for fine-tuning
+trl==1.18.2            # supervised fine-tuning (and GRPO) trainers; also installs `datasets`

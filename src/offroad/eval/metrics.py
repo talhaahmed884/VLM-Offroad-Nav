@@ -23,8 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from offroad.eval.path_truth import PathTruth, UNSEEN
-from offroad.fusion.grid_lookup import fill_ground
-from offroad.mapping.costmap import CostParams
+from offroad.mapping.costmap import CostParams, fill_ground
 from offroad.mapping.elevation import GridSpec, lidar_to_flu
 from offroad.planning.baseline import REACHED_TOLERANCE_M, BaselineResult
 

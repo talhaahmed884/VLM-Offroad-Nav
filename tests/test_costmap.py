@@ -5,11 +5,32 @@ import numpy as np
 from offroad.mapping.costmap import (
     LETHAL,
     CostParams,
+    fill_ground,
     geometric_cost_map,
     inflate,
     local_ground,
     obstacle_height_map,
 )
+
+
+def test_fill_ground_fills_a_hole_from_its_neighbors():
+    ground = np.full((80, 60), -1.2)
+    ground[30:40, 20:30] = np.nan
+    filled = fill_ground(ground)
+    assert np.allclose(filled, -1.2)
+    assert np.isnan(ground[35, 25])  # the input is not changed
+
+
+def test_fill_ground_stops_after_max_steps():
+    ground = np.full((20, 20), np.nan)
+    ground[0, 0] = 1.0
+    filled = fill_ground(ground, max_steps=3)
+    assert filled[3, 3] == 1.0
+    assert np.isnan(filled[4, 4])
+
+
+def test_fill_ground_all_unknown_stays_unknown():
+    assert np.isnan(fill_ground(np.full((5, 5), np.nan))).all()
 from offroad.mapping.elevation import GridSpec, build_elevation_map
 
 # 4 m x 4 m grid with 0.5 m cells: 8 x 8 cells, x in [0, 4), y in [-2, 2).

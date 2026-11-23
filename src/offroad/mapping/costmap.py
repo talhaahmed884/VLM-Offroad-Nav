@@ -141,6 +141,38 @@ def inflate(mask: np.ndarray, radius_cells: int) -> np.ndarray:
     return out
 
 
+FILL_STEPS = 40  # fill ground gaps up to 40 cells (10 m at 0.25 m) away from known ground
+
+
+def fill_ground(ground_z: np.ndarray, max_steps: int = FILL_STEPS) -> np.ndarray:
+    """Fill unknown (NaN) ground heights from their known neighbors, growing inward step by step.
+
+    Each step gives every unknown cell that touches a known cell the mean of its known
+    8-neighbors. Used for the blind circle around the vehicle and for gaps behind obstacles,
+    where the LiDAR saw no ground. Cells more than `max_steps` from known ground stay NaN.
+    ground_z: (nx, ny) meters. Returns a new (nx, ny) array.
+    """
+    filled = ground_z.astype(float)
+    nx, ny = filled.shape
+    for _ in range(max_steps):
+        missing = np.isnan(filled)
+        if not missing.any():
+            break
+        padded = np.pad(filled, 1, constant_values=np.nan)
+        neighbors = np.stack([
+            padded[1 + di:1 + di + nx, 1 + dj:1 + dj + ny]
+            for di in (-1, 0, 1) for dj in (-1, 0, 1) if (di, dj) != (0, 0)
+        ])
+        known = ~np.isnan(neighbors)
+        counts = known.sum(axis=0)
+        sums = np.where(known, neighbors, 0.0).sum(axis=0)
+        new = missing & (counts > 0)
+        if not new.any():
+            break
+        filled[new] = sums[new] / counts[new]
+    return filled
+
+
 def drivable_cost(obstacle_height: np.ndarray, params: CostParams) -> np.ndarray:
     """Cost of each cell ignoring obstacles: 1 + roughness_weight * min(height / max_step, 1).
 

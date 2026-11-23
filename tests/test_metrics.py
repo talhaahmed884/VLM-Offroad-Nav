@@ -130,7 +130,7 @@ def test_goal_blocked_counts_as_success():
     assert not PathMetrics(True, False, False, 2.0, *[None] * 11).success  # nothing in the way
 
 
-# --- the BaselineResult helpers used by run_hybrid.py ---
+# --- the BaselineResult helpers (roughness, hard-obstacle distance) ---
 
 
 def test_baseline_result_roughness_and_hard_distance():

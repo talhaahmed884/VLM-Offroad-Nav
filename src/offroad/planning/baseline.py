@@ -21,10 +21,10 @@ REACHED_TOLERANCE_M = 1.0  # a path ending this close to the target counts as re
 
 @dataclass
 class BaselineResult:
-    """Everything one planning run computed for one scan (the baseline, or the hybrid planner via `plan_on_cost`).
+    """Everything one planning run computed for one scan (the baseline, or any cost grid via `plan_on_cost`).
 
     costmap: the geometric cost map (before the vehicle footprint was cleared).
-    cost: (nx, ny) the cost grid the planner used (footprint cleared; for the hybrid, the VLM-adjusted one).
+    cost: (nx, ny) the cost grid the planner used (footprint cleared).
     labels: (nx, ny) most common ground-truth class per cell; 0 where no points.
     target_xy: FLU (x, y) of the point the vehicle is trying to reach, meters.
     start, goal: grid cells; goal comes from `choose_goal`, or is None if the vehicle

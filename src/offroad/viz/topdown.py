@@ -37,7 +37,7 @@ def add_cost_legend(ax, params: CostParams):
 def show_cost_values(ax, fig, cost: np.ndarray, spec: GridSpec, title: str):
     """Any (nx, ny) cost grid on a log color scale (dark = cheap ... yellow = expensive), black = blocked.
 
-    Unlike `cost_colors`, this shows costs changed by the VLM (0.7x ... 25) on one shared scale.
+    Unlike `cost_colors`, this shows any range of costs (about 0.5 ... 30) on one shared scale.
     """
     from matplotlib.colors import LogNorm
 

@@ -6,9 +6,9 @@ and the exit code is non-zero.
 
 Usage (from the repo root):
     python scripts/run_all.py                   # tests + every script on one sample frame (quick)
-    python scripts/run_all.py --full            # also the slow steps (all eval frames, label stats)
+    python scripts/run_all.py --full            # also the slow steps (e.g. the GPU check)
     python scripts/run_all.py --tests-only      # just the unit tests
-    python scripts/run_all.py --only grid baseline   # just the named steps
+    python scripts/run_all.py --only costmap path    # just the named steps
     python scripts/run_all.py --list            # show the steps and their commands
 """
 
@@ -33,50 +33,19 @@ class Step:
 # In pipeline order. Add new scripts here as the project grows.
 STEPS = [
     Step("tests", "unit tests (no dataset needed)", ("-m", "pytest", "-q")),
-    Step("projection", "phase 1: LiDAR overlay on frame 00000/0",
+    # Shared building blocks (kept from approach 1).
+    Step("projection", "LiDAR overlay on frame 00000/0",
          ("scripts/project_lidar.py", "--sequence", "0", "--frame", "0")),
-    Step("label-stats", "phase 2: class shares for all 6,234 label images (several minutes)",
-         ("scripts/compute_label_stats.py",), slow=True),
-    Step("candidates", "phase 2: evaluation-frame candidates and contact sheets",
-         ("scripts/select_eval_frames.py",), slow=True),
-    Step("elevation", "phase 3: elevation map for 00000/0",
+    Step("elevation", "elevation map for 00000/0",
          ("scripts/build_elevation_map.py", "--sequence", "0", "--frame", "0")),
-    Step("costmap", "phase 3: cost map for 00000/0",
+    Step("costmap", "cost map for 00000/0",
          ("scripts/build_cost_map.py", "--sequence", "0", "--frame", "0")),
-    Step("path", "phase 3: A* path for 00000/0",
+    Step("path", "geometric A* path for 00000/0",
          ("scripts/plan_path.py", "--sequence", "0", "--frame", "0")),
-    Step("baseline", "phase 3: baseline on all 36 evaluation frames (1-2 minutes)",
-         ("scripts/run_baseline.py",), slow=True),
-    Step("grid", "phase 4: VLM grid on 00000/120",
-         ("scripts/draw_grid.py", "--sequence", "0", "--frame", "120")),
-    Step("grid-eval", "phase 4: VLM grid on all 36 evaluation frames",
-         ("scripts/draw_grid.py", "--eval"), slow=True),
-    Step("prompt", "phase 4: VLM prompt and gridded image for 00000/120",
-         ("scripts/vlm_prompt.py", "--sequence", "0", "--frame", "120")),
-    # The VLM steps need requirements-vlm.txt and a GPU, so they only run with --full or --only.
-    Step("gpu", "phase 4: check PyTorch, the GPU, and the VLM libraries",
+    # Needs requirements-vlm.txt and a GPU, so it only runs with --full or --only.
+    Step("gpu", "check PyTorch, the GPU, and the VLM / fine-tuning libraries",
          ("scripts/check_gpu.py",), slow=True),
-    Step("vlm-one", "phase 4: VLM answer for 00000/120 (downloads the model the first time)",
-         ("scripts/run_vlm.py", "--sequence", "0", "--frame", "120"), slow=True),
-    Step("vlm", "phase 4: VLM answers for all 36 evaluation frames",
-         ("scripts/run_vlm.py",), slow=True),
-    Step("vlm-score", "phase 4: score saved VLM answers against the label images, draw them",
-         ("scripts/score_vlm.py",), slow=True),
-    Step("gridmap", "phase 5: image grid cells on the top-down map for 00000/120",
-         ("scripts/show_grid_on_map.py", "--sequence", "0", "--frame", "120")),
-    # Needs a saved VLM answer for the frame (outputs/vlm_runs/...), so it runs with --full or --only.
-    Step("fused", "phase 5: cost map re-weighted by the VLM hints for 00001/2132 (tall grass)",
-         ("scripts/show_fused_costmap.py", "--sequence", "1", "--frame", "2132"), slow=True),
-    Step("hybrid", "phase 5: baseline vs hybrid planner on all 36 evaluation frames (needs saved VLM answers)",
-         ("scripts/run_hybrid.py",), slow=True),
-    Step("truth", "phase 6: two-source ground truth along the baseline path for 00000/120",
-         ("scripts/check_path_truth.py", "--sequence", "0", "--frame", "120")),
-    Step("truth-eval", "phase 6: two-source ground-truth coverage on all 36 baseline paths",
-         ("scripts/check_path_truth.py",), slow=True),
-    Step("evaluate", "phase 6: baseline vs 4B / 8B / oracle hybrids, all metrics, all 36 frames",
-         ("scripts/evaluate.py",), slow=True),
-    Step("report", "phase 6: report tables and figures from outputs/eval (run 'evaluate' first)",
-         ("scripts/make_report.py",), slow=True),
+    # Approach 2 steps are added here as each phase is built (see docs/approach-2-plan.md).
 ]
 
 

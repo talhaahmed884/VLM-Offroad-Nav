@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from offroad.fusion.grid_lookup import fill_ground
 from offroad.geometry.projection import project_points_to_image
+from offroad.mapping.costmap import fill_ground
 from offroad.mapping.elevation import T_FLU_FROM_LIDAR, GridSpec
 
 UNSEEN = 0  # class ID used for "no ground truth" (same as "void" and planning.baseline.UNSEEN)

@@ -22,7 +22,7 @@ def version_of(name: str) -> str:
 
 def main() -> None:
     print(f"python        {sys.version.split()[0]}")
-    for name in ["torch", "torchvision", "transformers", "accelerate", "bitsandbytes", "PIL"]:
+    for name in ["torch", "torchvision", "transformers", "accelerate", "bitsandbytes", "peft", "trl", "PIL"]:
         print(f"{name:13s} {version_of(name)}")
 
     import torch
@@ -43,7 +43,7 @@ def main() -> None:
     out = layer(torch.randn(4, 256, device="cuda", dtype=torch.bfloat16))
     torch.cuda.synchronize()
     print(f"4-bit layer   ok (output {tuple(out.shape)})")
-    print("\nAll checks passed. You can run scripts/run_vlm.py.")
+    print("\nAll checks passed. The GPU is ready for the VLM and for fine-tuning.")
 
 
 if __name__ == "__main__":
