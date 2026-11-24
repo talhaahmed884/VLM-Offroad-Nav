@@ -230,6 +230,31 @@ and writes `outputs/selector/<tag>_mode{A,B}.jsonl` and `<tag>_summary.md`. A st
 continued with the same command. Each answer records the picture version; when the drawing
 changes, the script won't add to old answers (use a new `--tag`, or `--fresh` to overwrite).
 
+## Approach 2, phase 4: evaluation against baselines
+
+```bash
+python scripts/run_all.py --only candidates eval        # candidates with terrain numbers, then baselines on test
+python scripts/run_selector.py --split test --every 1   # zero-shot 4B on all 331 test frames, both modes (~1 h)
+python scripts/run_selector.py --split test --every 1 --history none
+python scripts/run_selector.py --split test --every 1 --history wrong
+python scripts/run_selector.py --split test --every 1 --modes B --direction "bear left"
+python scripts/run_selector.py --split test --every 1 --modes B --direction "bear right"
+python scripts/run_selector.py --split test --every 1 --model Qwen/Qwen3-VL-8B-Instruct
+python scripts/evaluate.py --split test \
+    --runs test_Qwen3-VL-4B-Instruct test_Qwen3-VL-4B-Instruct_nohist test_Qwen3-VL-4B-Instruct_wronghist test_Qwen3-VL-8B-Instruct \
+    --direction-test test_Qwen3-VL-4B-Instruct_dir-bear-left test_Qwen3-VL-4B-Instruct_dir-bear-right \
+    --history-test test_Qwen3-VL-4B-Instruct test_Qwen3-VL-4B-Instruct_wronghist
+```
+
+`evaluate.py` puts each run next to simple baselines on the same frames: a random pick, the
+straightest candidate, the cheapest one (the geometric planner's own pick), "toward the word"
+in Mode B (no image needed), the driver's candidate (the best possible), and the driven path
+itself. It reports how often the choice matches the driver, what terrain the chosen path
+crosses, how close it passes hard obstacles, how far it is from the driven path at 5 / 10 / 15 m,
+how good the safe-distance ticks are (against "always all"), and continue / stop. Two behaviour
+tests check whether the choice follows the direction word (same frames asked with "bear left"
+and "bear right") and whether a wrong history pulls it. Output: `outputs/eval/<split>_evaluation.md`.
+
 ## Layout
 
 - `src/offroad/`: library code
@@ -237,7 +262,7 @@ changes, the script won't add to old answers (use a new `--tag`, or `--fresh` to
   - `geometry/`: transforms and LiDAR-to-camera projection
   - `mapping/`: elevation map and geometric cost map
   - `planning/`: A\* and the geometric baseline
-  - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels, the VLM's picture and prompts, answer checking and scoring
+  - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels, the VLM's picture and prompts, answer checking and scoring, terrain numbers per path, and the evaluation with baselines
   - `vlm/`: running a local VLM (Transformers)
   - `eval/`: ground truth along a path (LiDAR + camera labels) and safety metrics
   - `viz/`: pictures

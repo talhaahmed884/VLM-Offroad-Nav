@@ -53,6 +53,15 @@ def test_hard_obstacle_points_are_filtered():
     assert xy.tolist() == [[10.0, 2.0]]
 
 
+def test_hard_obstacle_points_lying_flat_can_be_dropped():
+    points_flu = np.array([[10.0, 2.0, GROUND_Z + 0.5], [8.0, 1.0, GROUND_Z + 0.05]])  # a person, and "person" on the ground
+    labels = np.array([PERSON, PERSON])
+    ground = np.full(SPEC.shape, GROUND_Z)
+    assert len(hard_obstacle_xy(flu_to_lidar(points_flu), labels, [PERSON], ground, SPEC)) == 2  # approach 1: kept
+    xy = hard_obstacle_xy(flu_to_lidar(points_flu), labels, [PERSON], ground, SPEC, min_height=0.3)
+    assert xy.tolist() == [[10.0, 2.0]]
+
+
 def test_distance_to_obstacles():
     path = np.array([[0.0, 0.0], [4.0, 0.0]])
     assert distance_to_obstacles(path, np.array([[4.0, 3.0]])) == pytest.approx((4.0, 3.0))  # (mean of 5 and 3, min 3)

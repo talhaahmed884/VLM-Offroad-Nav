@@ -90,6 +90,29 @@ def history_text(entries: list[HistoryEntry], now: float, length: int = HISTORY_
     return "; ".join(parts) + "." if parts else "none."
 
 
+WRONG_TURN_DEG = 35.0  # the made-up turn in a wrong history: "bear left" / "bear right"
+
+
+def wrong_history(entries: list[HistoryEntry], seed: int) -> tuple[list[HistoryEntry], str | None]:
+    """The history with its latest decision replaced by a sharp turn the vehicle did not take (phase 4 test).
+
+    The made-up turn goes to the side opposite the real latest decision's turn, or to a random
+    (seeded) side if it went straight or stopped. Returns (new entries, the made-up side "left" /
+    "right"), or (entries, None) if there is no history yet. The input list is not changed.
+    In closed loop the history holds the model's own mistakes; this checks whether a wrong
+    entry pulls the next choice toward it.
+    """
+    if not entries:
+        return list(entries), None
+    last = entries[-1]
+    if last.bearing_deg is not None and direction_word(last.bearing_deg) != "straight":
+        side = "right" if last.bearing_deg > 0 else "left"
+    else:
+        side = ("left", "right")[int(np.random.default_rng(seed).integers(2))]
+    fake = HistoryEntry(last.timestamp, "continue", WRONG_TURN_DEG if side == "left" else -WRONG_TURN_DEG)
+    return list(entries[:-1]) + [fake], side
+
+
 def build_prompt(colors: list[str], mode: str = "A", direction: str | None = None,
                  history: str = "none.") -> str:
     """The text prompt for one frame.

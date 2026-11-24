@@ -3,7 +3,9 @@
 For each frame in configs/decision_frames.csv it builds the cost map, generates up to 4
 candidates on the strict and on the relaxed cost grid, and labels each candidate (matches the
 driver? how far is it safe?) from the two-source ground truth. The driven path is labelled the
-same way, as a check on the labels. It writes one JSON line per frame per variant to
+same way, as a check on the labels. Each path also gets its terrain and clearance numbers
+(phase 4: water / puddle / mud / vegetation shares, closest hard obstacle, slope), used only to
+score a choice. It writes one JSON line per frame per variant to
 outputs/candidates/<variant>.jsonl and prints (and saves to outputs/candidates/comparison.md)
 a comparison table per split.
 
@@ -26,6 +28,7 @@ import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +95,12 @@ def _labels_dict(lab, id_to_name: dict[int, str]) -> dict:
     }
 
 
+def _metrics_dict(m) -> dict:
+    """Terrain and clearance numbers of one path (phase 4), rounded for the JSON file."""
+    return {"metrics": None if m is None else {
+        k: (None if v is None else round(v, 3)) for k, v in asdict(m).items()}}
+
+
 def process_frame(task: tuple[dict, Path | None]) -> dict[str, dict]:
     """{variant: JSON record} for one decision frame."""
     row, root = task
@@ -106,7 +115,8 @@ def process_frame(task: tuple[dict, Path | None]) -> dict[str, dict]:
     common = {
         "split": row["split"], "sequence": row["sequence"], "frame": index, "direction": row["direction"] or None,
         "has_label_image": frame.label_image is not None,
-        "driven": {"xy": _round(result.driven_xy), **_labels_dict(result.driven, id_to_name)},
+        "driven": {"xy": _round(result.driven_xy), **_labels_dict(result.driven, id_to_name),
+                   **_metrics_dict(result.driven_metrics)},
     }
     records = {}
     for variant, fc in result.variants.items():
@@ -118,8 +128,8 @@ def process_frame(task: tuple[dict, Path | None]) -> dict[str, dict]:
             "candidates": [{
                 "xy": _round(c.xy), "target_bearing_deg": c.target_bearing_deg,
                 "end_bearing_deg": round(c.end_bearing_deg, 1), "length_m": round(c.length_m, 2),
-                "cost_per_m": round(c.cost_per_m, 3), **_labels_dict(lab, id_to_name),
-            } for c, lab in zip(fc.candidates, fc.labels)],
+                "cost_per_m": round(c.cost_per_m, 3), **_labels_dict(lab, id_to_name), **_metrics_dict(m),
+            } for c, lab, m in zip(fc.candidates, fc.labels, fc.metrics)],
         }
     return records
 

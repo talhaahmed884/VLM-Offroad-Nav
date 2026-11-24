@@ -6,6 +6,11 @@ Mode B ("keep going + direction"). The history is the model's own earlier answer
 run (as it would be in closed loop), or nothing (--history none). Frames without candidates
 aren't asked: the vehicle would stop on its own.
 
+Phase 4 tests: --history wrong replaces the latest history entry with a sharp turn the vehicle
+didn't take (does a wrong history pull the choice?); --direction "bear left" gives Mode B the
+same word in every frame instead of the driver's (does the choice follow the word?).
+scripts/evaluate.py compares these runs with each other and with simple baselines.
+
 Each answer is checked (valid JSON, a known color, a tick for every candidate) and scored against
 the labels: does the choice match the driver, is it safe, does it go through a puddle when a
 dry path existed, are the ticks right (and how often too optimistic), is the action right.
@@ -18,6 +23,7 @@ Usage (from the repo root; needs requirements-vlm.txt and a GPU):
     python scripts/run_selector.py --limit 5                      # quick look: 5 validation frames
     python scripts/run_selector.py --split val --every 4          # ~84 frames x 2 modes, ~20-30 min
     python scripts/run_selector.py --split val --every 4 --history none --tag val_nohist
+    python scripts/run_selector.py --split test --every 1 --modes B --direction "bear left"
 """
 
 import argparse
@@ -41,7 +47,16 @@ from offroad.mapping.elevation import GridSpec  # noqa: E402
 from offroad.nav.candidates import CHOSEN_VARIANT  # noqa: E402
 from offroad.nav.frame_candidates import candidates_for_frame  # noqa: E402
 from offroad.nav.labels import has_real_choice  # noqa: E402
-from offroad.nav.prompts import MODES, HistoryEntry, chosen_bearing, history_text, parse_answer  # noqa: E402
+from offroad.nav.prompts import (  # noqa: E402
+    DIRECTION_MEANINGS,
+    MODES,
+    HistoryEntry,
+    chosen_bearing,
+    history_text,
+    parse_answer,
+    wrong_history,
+)
+from offroad.nav.visual_prompt import frame_seed  # noqa: E402
 from offroad.nav.scoring import score_answer  # noqa: E402
 from offroad.nav.selector import prepare_selector_input  # noqa: E402
 from offroad.nav.visual_prompt import PICTURE_VERSION  # noqa: E402
@@ -50,6 +65,14 @@ from offroad.vlm.runner import strip_thinking  # noqa: E402
 
 FRAMES_CSV = REPO_ROOT / "configs" / "decision_frames.csv"
 MAX_NEW_TOKENS = 300
+HISTORY_SETTINGS = ("own", "none", "wrong")
+
+
+def default_tag(args: argparse.Namespace) -> str:
+    """<split>_<model short name>, plus _nohist / _wronghist and _dir-<word> for the phase 4 tests."""
+    tag = f"{args.split}_{args.model.split('/')[-1]}"
+    tag += {"own": "", "none": "_nohist", "wrong": "_wronghist"}[args.history]
+    return tag + (f"_dir-{args.direction.replace(' ', '-')}" if args.direction else "")
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,8 +81,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--every", type=int, default=4, help="use every Nth decision frame (default: 4, ~2 s apart)")
     parser.add_argument("--limit", type=int, default=None, help="stop after this many frames")
     parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES), help="default: A B")
-    parser.add_argument("--history", choices=("own", "none"), default="own",
-                        help="own = the model's own last 3 answers (default); none = no history")
+    parser.add_argument("--history", choices=HISTORY_SETTINGS, default="own",
+                        help="own = the model's own last 3 answers (default); none = no history; wrong = own, "
+                             "with the latest one replaced by a sharp turn it didn't take (phase 4 test)")
+    parser.add_argument("--direction", choices=list(DIRECTION_MEANINGS), default=None,
+                        help="give Mode B this direction word in every frame instead of the driver's "
+                             "(phase 4 test: does the choice follow the word?); use with --modes B")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--quantize", choices=QUANTIZE_OPTIONS, default="4bit")
     parser.add_argument("--tag", default=None, help="output name (default: <split>_<model short name>)")
@@ -133,7 +160,7 @@ def by_direction(records: list[dict]) -> dict[str, str]:
     groups = defaultdict(list)
     for r in records:
         if r["asked"] and r["score"]["choice_matches_driver"] is not None:
-            groups[r["direction"]].append(r["score"]["choice_matches_driver"])
+            groups[r.get("driver_direction", r["direction"])].append(r["score"]["choice_matches_driver"])
     return {word: pct(sum(v), len(v)) for word, v in sorted(groups.items())}
 
 
@@ -168,7 +195,7 @@ def write_summary(path: Path, title: str, per_mode: dict[str, list[dict]]) -> st
 def main() -> None:
     args = parse_args()
     rows = read_frames(args.frames, args.split, args.every, args.limit)
-    tag = args.tag or f"{args.split}_{args.model.split('/')[-1]}{'_nohist' if args.history == 'none' else ''}"
+    tag = args.tag or default_tag(args)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     paths = {m: args.out_dir / f"{tag}_mode{m}.jsonl" for m in args.modes}
     done = {m: ({} if args.fresh else read_done(paths[m])) for m in args.modes}
@@ -221,7 +248,9 @@ def main() -> None:
                         history[mode].append(HistoryEntry(timestamp, r["action"], r["chosen_bearing_deg"]))
                     continue
                 record = {"split": row["split"], "sequence": key[0], "frame": key[1], "mode": mode,
-                          "direction": row["direction"], "history_setting": args.history,
+                          "direction": (args.direction or row["direction"]) if mode == "B" else row["direction"],
+                          "driver_direction": row["direction"], "direction_forced": bool(args.direction),
+                          "history_setting": args.history, "history_injected": None,
                           "picture_version": PICTURE_VERSION,
                           "real_choice": has_real_choice(fc.labels), "asked": bool(fc.candidates),
                           "colors": [], "labels": [asdict(lab) for lab in fc.labels]}
@@ -229,10 +258,17 @@ def main() -> None:
                     record.update(action="stop", chosen_bearing_deg=None, problems=[], seconds=0.0)
                     files[mode].write(json.dumps(record) + "\n")
                     continue
-                hist = history_text(history[mode], timestamp) if args.history == "own" else "none."
+                if args.history == "none":
+                    hist = "none."
+                elif args.history == "wrong":
+                    entries, record["history_injected"] = wrong_history(history[mode],
+                                                                        frame_seed(key[0], key[1], salt=2))
+                    hist = history_text(entries, timestamp)
+                else:
+                    hist = history_text(history[mode], timestamp)
                 selector_input = prepare_selector_input(frame.image, frame.calib, fc.candidates,
                                                         result.costmap.ground_z, spec, key[0], key[1], mode,
-                                                        row["direction"] or None, hist)
+                                                        record["direction"] or None, hist)
                 reply = vlm.generate(selector_input.picture, selector_input.prompt)
                 text = strip_thinking(reply.text)
                 answer = parse_answer(text, selector_input.colors)

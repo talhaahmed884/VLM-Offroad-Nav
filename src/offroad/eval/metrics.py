@@ -83,11 +83,14 @@ def hard_obstacle_xy(
     spec: GridSpec,
     vehicle_height: float = CostParams.vehicle_height,
     ignore_radius: float = VEHICLE_IGNORE_RADIUS_M,
+    min_height: float | None = None,
 ) -> np.ndarray:
     """FLU (x, y) of the LiDAR points labelled as hard obstacles that the vehicle could hit: (P, 2).
 
     Points higher than vehicle_height above the local ground (branches overhead) and points
-    within ignore_radius of the sensor (the vehicle) are left out.
+    within ignore_radius of the sensor (the vehicle) are left out. With min_height, points at most
+    that high above the ground are left out too (approach 2: RELLIS labels flat ground near
+    people as "person"; a hard obstacle lying on the ground is not something the vehicle hits).
     ground_z: (nx, ny) ground height per map cell (gaps are filled); points outside the map are dropped.
     """
     points_flu = lidar_to_flu(points_lidar)
@@ -101,8 +104,11 @@ def hard_obstacle_xy(
     inside = (i >= 0) & (i < nx) & (j >= 0) & (j < ny)
     points, i, j = points[inside], i[inside], j[inside]
     ground = fill_ground(ground_z)[i, j]
-    low = ~np.isfinite(ground) | (points[:, 2] - ground <= vehicle_height)
-    return points[low, :2]
+    height = points[:, 2] - ground
+    keep = ~np.isfinite(ground) | (height <= vehicle_height)
+    if min_height is not None:
+        keep &= ~np.isfinite(ground) | (height > min_height)
+    return points[keep, :2]
 
 
 def distance_to_obstacles(path_xy: np.ndarray, obstacle_xy: np.ndarray) -> tuple[float, float] | None:

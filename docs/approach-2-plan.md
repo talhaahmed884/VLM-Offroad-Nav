@@ -348,8 +348,43 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
 - **Does it lean on the history?** Evaluate with and without the history, and with a wrong
   earlier decision in it. In closed loop the history holds the model's own (possibly wrong)
   decisions, not the driver's.
-- **Comparison with approach 1:** score approach 1's baseline and hybrid paths with the same
-  safety metrics (and driven-path L2) on the same test frames.
+- ~~**Comparison with approach 1:** score approach 1's baseline and hybrid paths with the same
+  safety metrics (and driven-path L2) on the same test frames.~~ **User decision 2026-11-23:**
+  not in phase 4; the two approaches are compared at the end, using approach 1's existing report
+  (its numbers come from 36 frames with destinations, so the comparison is side by side, not on
+  the same frames). The "cheapest" baseline is roughly what approach 1's geometric planner picks.
+- **User decision 2026-11-23: all 331 test frames** (sequence 00004, `--every 1`).
+
+**Status (2026-11-23): written; checked on the validation runs; the test runs are the user's.**
+- **Terrain numbers per path** (`nav/candidate_metrics.py`, stored by `build_candidates.py` as
+  `metrics` on every candidate and on the driven path; the labels are unchanged, checked
+  byte-for-byte): shares of water / puddle / mud / grass-bush / tree-log / no ground truth,
+  closest hard obstacle (`clearance_m`), near miss (< 0.75 m, half the vehicle's width), slope
+  and bump height. Hard obstacles count only if they stand more than 0.3 m above the ground
+  (new `min_height` in `eval.metrics.hard_obstacle_xy`; approach 1's default is unchanged):
+  without it, ~1/3 of all paths, the driver's included, had a "near miss", all from "person"
+  labels on flat ground (median 6 cm high). After the fix: 6–9% for candidates and 8% for the
+  driven path (val), mostly branches 1.65–1.8 m up that the vehicle drove under.
+- **Evaluation** (`nav/evaluation.py`, `scripts/evaluate.py`): a choice is a weight per candidate
+  (one-hot; uniform for random, so random is the exact average). Baselines: random, straightest,
+  cheapest, Mode B "toward the word" (end bearing closest to the word: straight 0°, slight 17.5°,
+  bear 35°), driver (oracle), and the **driven path itself as a reference column**. Rows: matches
+  the driver (all / real choice / turn frames), closest candidate, safe to tick 1 / end, puddle
+  when a dry path existed, terrain shares, closest hard obstacle, near misses, slope, distance
+  from the driven path at 5 / 10 / 15 m. Ticks: "always all" vs runs, with exact / within one /
+  too optimistic / too cautious, "unsafe stretch called safe past it", and per true answer type.
+  Continue / stop: "always continue" vs runs, stop recall and precision. All columns use the
+  same frames (those every run answered).
+- **Behaviour tests** (`run_selector.py`): `--direction WORD` gives Mode B the same word in every
+  frame (`evaluate.py --direction-test LEFT RIGHT`: followed / ignored / reversed, and how often
+  the leftmost / rightmost is picked); `--history wrong` replaces the latest history entry with a
+  sharp turn not taken, opposite to the real one (or a seeded random side) (`--history-test OWN
+  WRONG`: moved toward / away / same). Default tags get `_nohist`, `_wronghist`, `_dir-<word>`.
+- **First look, validation (val every 4th, picture v2):** the cheapest candidate matches the
+  driver in 47% (turn frames 58%), straightest 36%, random 32%, "toward the word" 42%, oracle 82%;
+  the 4B and 8B 25–27%. So the geometric planner's own pick is far ahead of the zero-shot VLM. The
+  driver's center line runs over much less "mud" than the candidates (1.7% vs ~10%): the wheels
+  are in the ruts, the center on the grass between them, while candidates follow the ruts.
 
 ### Phase 5: fine-tuning
 - **QLoRA supervised fine-tuning of Qwen3-VL-4B on the laptop** (RTX 5060, 8 GB): the base model

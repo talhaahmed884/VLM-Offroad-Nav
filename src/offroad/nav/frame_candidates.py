@@ -19,11 +19,11 @@ The driven path is labelled the same way as a candidate. The driver really drove
 labels call it unsafe, that is a sign the labels (or the unsafe classes) are too strict.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from offroad.eval.metrics import HARD_OBSTACLE_CLASSES, ids_of
+from offroad.eval.metrics import HARD_OBSTACLE_CLASSES, hard_obstacle_xy, ids_of
 from offroad.eval.path_truth import UNSEEN, path_truth
 from offroad.mapping.costmap import CostMap, CostParams, geometric_cost_map, inflate
 from offroad.mapping.elevation import GridSpec, build_elevation_map, lidar_to_flu, majority_label_grid
@@ -38,6 +38,7 @@ from offroad.nav.candidates import (
     resample_and_cut,
     strict_cost,
 )
+from offroad.nav.candidate_metrics import CandidateMetrics, candidate_metrics, group_ids
 from offroad.nav.driven_path import driven_path_flu
 from offroad.nav.labels import CandidateLabels, cells_along, has_real_choice, label_candidate, should_stop
 
@@ -50,11 +51,12 @@ CAUTION_CLASSES = ("puddle",)  # driven through in RELLIS: recorded, but not uns
 
 @dataclass
 class FrameCandidates:
-    """One variant's candidates for one frame, with their labels (same order: left to right)."""
+    """One variant's candidates for one frame, with their labels and terrain numbers (same order: left to right)."""
 
     variant: str
     candidates: list[Candidate]
     labels: list[CandidateLabels]
+    metrics: list[CandidateMetrics] = field(default_factory=list)
 
     @property
     def stop(self) -> bool:
@@ -87,12 +89,14 @@ class FrameResult:
     driven: the driven path's first CANDIDATE_LENGTH_M labelled like a candidate.
     variants: {"strict": ..., "relaxed": ...}.
     costmap: the geometric cost map of the frame (its ground_z places the paths on the camera image).
+    driven_metrics: terrain and clearance numbers of the driven path's first CANDIDATE_LENGTH_M.
     """
 
     driven_xy: np.ndarray
     driven: CandidateLabels
     variants: dict[str, FrameCandidates]
     costmap: CostMap
+    driven_metrics: CandidateMetrics | None = None
 
 
 def unsafe_cells(classes: np.ndarray, cells: list[tuple[int, int]], standing: np.ndarray,
@@ -153,16 +157,24 @@ def candidates_for_frame(
         cell_unsafe = dict(zip(all_cells, unsafe))
         cell_caution = dict(zip(all_cells, caution))
 
-    labels = []
+    # For the clearance numbers: hard-obstacle points that stand up more than max_step, the same
+    # rule as for "unsafe" (RELLIS labels flat ground near people as "person").
+    obstacle_xy = hard_obstacle_xy(points_lidar, point_labels, ids_of(id_to_name, HARD_OBSTACLE_CLASSES),
+                                   costmap.ground_z, spec, params.vehicle_height, min_height=params.max_step)
+    ids = group_ids(id_to_name)
+    labels, metrics = [], []
     for path, (cells, index) in zip(paths, per_path):
         classes = np.array([cell_class[cells[k]] if k >= 0 else UNSEEN for k in index], dtype=int)
         unsafe = np.array([bool(cell_unsafe[cells[k]]) if k >= 0 else False for k in index], dtype=bool)
         caution = np.array([bool(cell_caution[cells[k]]) if k >= 0 else False for k in index], dtype=bool)
         labels.append(label_candidate(path, classes, unsafe, driven_xy, caution))
+        metrics.append(candidate_metrics(classes, path.xy, cells, obstacle_xy, costmap.ground_z,
+                                         costmap.obstacle_height, spec, ids))
 
     results, k = {}, 1
     for variant in variants:
         n = len(candidates[variant])
-        results[variant] = FrameCandidates(variant, candidates[variant], labels[k:k + n])
+        results[variant] = FrameCandidates(variant, candidates[variant], labels[k:k + n], metrics[k:k + n])
         k += n
-    return FrameResult(driven_xy=driven_xy, driven=labels[0], variants=results, costmap=costmap)
+    return FrameResult(driven_xy=driven_xy, driven=labels[0], variants=results, costmap=costmap,
+                       driven_metrics=metrics[0])

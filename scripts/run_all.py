@@ -59,6 +59,8 @@ STEPS = [
     # Needs the VLM on the GPU (~1-2 min with loading), so it only runs with --full or --only.
     Step("selector", "phase 3: zero-shot Qwen3-VL-4B on 3 validation frames, both modes",
          ("scripts/run_selector.py", "--limit", "3", "--tag", "smoke", "--fresh"), slow=True),
+    Step("eval", "phase 4: baselines on the test frames (random, straightest, cheapest, the driver)",
+         ("scripts/evaluate.py", "--split", "test")),
 ]
 
 
