@@ -249,6 +249,83 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
 - **History:** prompts are built so the history can be left out, and evaluated both with and
   without it (see phase 4).
 
+**Status (2026-11-22): written; my trial on 12 validation frames is below; not yet run by the user.**
+- **Picture** (`nav/visual_prompt.py`): the camera image shrunk to 800 × 500 (the camera's
+  shape; setting 10 said 800 × 600, which would stretch it). Each candidate is a colored line
+  with a dark outline (drawn side by side where candidates share a stretch, see below), white dots at 5 / 10 / 15 m (the 5 m dot is at or just below the bottom
+  edge; the camera starts seeing at ~4.4 m), and its color name at the far end. The lines sit on
+  a smoothed ground (a quadratic along each path fitted to the cost map's ground, one round of
+  outlier removal, held constant in the blind zone) and get extra smoothing for drawing only
+  (3 m window: the 0.25 m grid zigzag showed as ~20 px wiggles at 15 m). Only run-time data is
+  used (image, calibration, candidates, LiDAR ground), never poses or labels.
+- **Random colors and order** per frame, seeded from sequence and frame so runs repeat
+  (`assign_colors`, `frame_seed`, `prompts.shuffled`).
+- **Prompts** (`nav/prompts.py`): Mode A ("keep driving … no destination"; prefer the trail) and
+  Mode B (plus the direction word and its meaning). The tick rules are spelled out, unsafe =
+  deep water or something the vehicle would hit, and grass, low bushes, mud and puddles are
+  drivable ("prefer a dry path when one is as good"). Answer: `{"safe_until": {...}, "choice",
+  "action", "reasoning"}`. The per-candidate judgement comes **first**: with the choice first,
+  the 4B justified its pick by calling every other candidate "none" (first try, 6 frames).
+- **History** (`history_text`): the last 3 decisions without colors ("2.0 s ago: continued
+  slight left"), from the model's own earlier answers in the run, as in closed loop; or none.
+- **Checker** (`parse_answer`): first JSON object, case-insensitive colors ("Red path" → red;
+  two colors named → no choice), tick synonyms ("tick2", "10 m", 2), action synonyms.
+- **Scoring** (`nav/scoring.py`, labels only as the answer key): choice matches the driver /
+  is the closest candidate, chosen candidate safe, chose a puddle when a dry path existed, ticks
+  exact / within one / too optimistic / too cautious, action correct.
+- **Scripts:** `show_prompt.py` (the exact picture and prompt, plus the answer key) and
+  `run_selector.py` (`--split`, `--every`, `--limit`, `--modes`, `--history own|none`, `--model`,
+  `--tag`; resumable; → `outputs/selector/<tag>_mode{A,B}.jsonl` + `<tag>_summary.md`).
+  `run_all.py` steps `prompt` and `selector` (slow: 3 frames).
+- **Trial, Qwen3-VL-4B 4-bit, first 12 validation frames (00003, every 4th):** 100% valid
+  answers, ~5 s per answer, 3.4 GB GPU memory. The chosen path was always safe, but it matched
+  the driver in only 1–2 of 12 (from frame 168 on, no candidate matches: the driver turns), and
+  it often picked the rightmost candidate. Ticks were never too optimistic but always too
+  cautious: it never answers "all", stopping at "tick 2" even on clear paths. It mentions real
+  objects (the orange barriers in 00003/42) beyond the 15 m the labels cover. This is the
+  zero-shot starting point; further prompt tuning on validation frames would overfit the prompt,
+  so it stops here, and fine-tuning (phase 5) is where this should improve.
+- **The user's run (2026-11-23), 4B and 8B, val every 4th (83 frames asked, both modes):**
+
+  | | 4B A | 4B B | 8B A | 8B B |
+  |---|---|---|---|---|
+  | valid answers | 100% | 100% | 100% | 100% |
+  | choice matches the driver | 25% | 28% | 19% | 27% |
+  | ticks exact | 2% | 2% | 37% | 45% |
+  | ticks too optimistic / too cautious | 0 / 98% | 0 / 98% | 0 / 63% | 0 / 55% |
+  | seconds per answer | 5.8 | 5.5 | 4.5 | 4.2 |
+
+  - **Choice no better than chance:** a random pick would match the driver in 32% of these
+    frames, the straightest candidate in 36%, the middle one in 40%; the best possible is 82%
+    (in the other frames no candidate matches). The 4B and 8B agree on only ~55% of choices.
+  - **Mode B ignores the word:** in the 15 "slight left" frames, the leftmost candidate would
+    match 60%, the models 27%.
+  - **Safety numbers are trivial on this drive:** 280 of 284 val candidates are labelled "all"
+    (train: 95%), so "chosen safe", "action correct" and "always all" (99% of ticks exact) need
+    no vision. Phase 4 must report each number next to these baselines; phase 5 needs balancing.
+  - **Picture problem:** the candidates branch off one shortest-path tree, so about half share
+    their first 10 m with another (within 0.1 m), and the line drawn last hid the other (in 223 of
+    321 val frames a candidate was hidden up to 10 m, e.g. 00003/22, where the two hidden ones
+    were the driver's).
+- **User decision 2026-11-23: shared stretches are drawn side by side** (picked from mock-ups:
+  now / 50% transparent / side by side / both). Transparency alone doesn't help: exactly
+  overlapping lines blend into a new color (red over yellow → orange) that names no candidate,
+  and without the outline the lines fade on grass. `spread_overlapping` shifts lines that would
+  overlap (within 8 px at the same distance along) 7 px apart, in the left-to-right order of
+  where they end, smoothed over 9 points; tick dots stay in the middle of a shared stretch.
+  `PICTURE_VERSION = 2` is stored with each answer, and `run_selector.py` refuses to add to a file
+  with answers to another version.
+- **The user's rerun with picture version 2 (2026-11-23, tags `val_4B_v2`, `val_8B_v2`):** choice
+  matches the driver 4B 25% / 27%, 8B 25% / 27% (Mode A / B); ticks exact 4B 1–2%, 8B 37% / 46%;
+  4.2–5.2 s per answer. Choices changed in only 12–18% of frames, and the match rate stayed the
+  same (8B Mode A 19% → 25%, 5 frames). So the hidden lines were not the main reason for the weak
+  choices; e.g. in 00003/22 both models now pick red (the driver's), but overall the zero-shot
+  choice is still at chance (random 32%). No listing-order bias (first listed chosen as often as
+  chance); a color preference (4B: yellow 33, blue 28, red 13, magenta 9 of 83), which the random
+  colors turn into noise instead of a fake score. One likely reason the driver match is low: on a
+  wide trail, both ruts (or the trail and its edge) are equally reasonable, and only one is "the
+  driver's". **Phase 3 is done** (pending the user's review); next is phase 4 when the user says.
+
 ### Phase 4: evaluation
 - **Baselines:** random choice; the geometric choice (lowest-cost candidate); the straightest
   candidate; "always all safe, continue"; "follow the direction" without vision (the candidate
@@ -288,8 +365,16 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
     rare (~4%). Use the rare frames (turns, unsafe candidates, stop) more often and the easy
     straight ones less, so the model can't score well by always answering "all safe, continue".
   - **Mirroring:** flip the image left-right, mirror the candidates, and swap left / right in
-    the Mode B word. This doubles the turn data (the test drive has no "bear right" frames, and
-    training has fewer right turns than left).
+    the Mode B word. This doubles the turn data and balances left and right (training has 382
+    right-turn and 309 left-turn frames; the test drive has 20 "slight right" and no "bear right").
+  - **Frames where no candidate matches the driver** (user decision 2026-11-23: an experiment).
+    238 of the 1,527 training frames with candidates (15%; 44–49% of the "bear" frames, 3% of
+    "straight"): the driver turned off a trail that is still open ahead (235 of them have a
+    candidate safe to tick 1), usually out of the camera's view. Not dead ends: those are the 26
+    frames with no candidate at all, where the vehicle stops without asking the VLM. Train with
+    and without these frames and compare. Options for "with": the safety part only (no choice
+    target) in Mode A, and the candidate closest to the driver in Mode B, where the direction
+    word carries the intent.
   - **Photometric augmentation:** small random changes of brightness, contrast, color, and blur,
     so the model doesn't fit RELLIS's look (simulator images look different).
   - **Few epochs, early stopping:** frames 0.5 s apart on the same trail are near-duplicates, so

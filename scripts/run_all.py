@@ -54,6 +54,11 @@ STEPS = [
          ("scripts/build_candidates.py",)),
     Step("show", "phase 2: candidates of 00000/601 on the camera image and the cost grids",
          ("scripts/show_candidates.py", "--sequence", "0", "--frame", "601")),
+    Step("prompt", "phase 3: the VLM's picture and Mode B prompt for 00000/601",
+         ("scripts/show_prompt.py", "--sequence", "0", "--frame", "601", "--mode", "B")),
+    # Needs the VLM on the GPU (~1-2 min with loading), so it only runs with --full or --only.
+    Step("selector", "phase 3: zero-shot Qwen3-VL-4B on 3 validation frames, both modes",
+         ("scripts/run_selector.py", "--limit", "3", "--tag", "smoke", "--fresh"), slow=True),
 ]
 
 

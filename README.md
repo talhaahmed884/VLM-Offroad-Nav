@@ -203,6 +203,33 @@ and a comparison table, `outputs/candidates/comparison.md`, per split. `show_can
 saves `outputs/candidates_<seq>_<frame>.png`: the candidates on the camera image (white dots at
 the ticks, the driven path in cyan) and on both cost grids from above.
 
+## Approach 2, phase 3: the VLM's picture and the zero-shot selector
+
+```bash
+python scripts/show_prompt.py --sequence 0 --frame 601 --mode B   # exactly what the VLM sees, plus the answer key
+python scripts/run_selector.py --limit 5                          # zero-shot Qwen3-VL-4B on 5 validation frames
+python scripts/run_selector.py --split val --every 4              # ~84 validation frames, both modes (~20-30 min)
+python scripts/run_selector.py --split val --every 4 --history none   # the same without the history
+python scripts/run_selector.py --split val --every 4 --model Qwen/Qwen3-VL-8B-Instruct   # the 8B reference
+```
+
+The relaxed candidates are drawn on the camera image (shrunk to 800 × 500) as colored lines with
+white dots at 5, 10 and 15 m and their color name at the far end. Where candidates share a
+stretch (they often follow the same track at first), the lines are drawn side by side, so every
+color can be followed from the bottom of the picture. Colors are assigned at random
+per frame and listed in the prompt in random order, so the model can't learn "red is usually
+right". The prompt asks, for each candidate, how far it is safe ("all", "tick 2", "tick 1",
+"none"), then which one to drive on and whether to continue or stop. Mode B adds a direction
+word. The history is the model's own last 3 decisions, without colors ("2.0 s ago: continued
+slight left"). The picture uses only the image, the calibration, the candidates and the LiDAR
+ground, so it works the same in a closed-loop simulator.
+
+`run_selector.py` checks each answer, scores it against the labels (does the choice match the
+driver, is it safe, does it go through a puddle when a dry path existed, are the ticks right),
+and writes `outputs/selector/<tag>_mode{A,B}.jsonl` and `<tag>_summary.md`. A stopped run can be
+continued with the same command. Each answer records the picture version; when the drawing
+changes, the script won't add to old answers (use a new `--tag`, or `--fresh` to overwrite).
+
 ## Layout
 
 - `src/offroad/`: library code
@@ -210,7 +237,7 @@ the ticks, the driven path in cyan) and on both cost grids from above.
   - `geometry/`: transforms and LiDAR-to-camera projection
   - `mapping/`: elevation map and geometric cost map
   - `planning/`: A\* and the geometric baseline
-  - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels
+  - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels, the VLM's picture and prompts, answer checking and scoring
   - `vlm/`: running a local VLM (Transformers)
   - `eval/`: ground truth along a path (LiDAR + camera labels) and safety metrics
   - `viz/`: pictures
