@@ -1,7 +1,8 @@
 """Evaluate selector runs against simple baselines on the same frames (phase 4).
 
 Reads the candidates (outputs/candidates/relaxed.jsonl, with labels and terrain numbers) and any
-number of selector runs (outputs/selector/<tag>_mode{A,B}.jsonl), and writes one report:
+number of selector runs (<tag>_mode{A,B}.jsonl, found anywhere under outputs/selector, which is
+sorted into one subfolder per collection; see outputs/selector/README.md), and writes one report:
 - path choice, per mode: baselines (random, straightest, cheapest, "toward the word" in Mode B,
   and the driver as the oracle), the driven path itself as a reference (e.g. how often the
   driver passed close to an obstacle), and each run: matches the driver (all frames, frames with
@@ -46,6 +47,7 @@ from offroad.nav.evaluation import (  # noqa: E402
     summarize_choices,
     summarize_ticks,
 )
+from offroad.nav.run_files import answer_file_name, find_run_dir  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,12 +72,15 @@ def read_jsonl(path: Path) -> dict[tuple[str, int], dict]:
 
 
 def read_run(selector_dir: Path, tag: str) -> dict[str, dict[tuple[str, int], dict]]:
-    """{mode: {frame key: answer record}} for the modes the run has."""
-    run = {m: read_jsonl(selector_dir / f"{tag}_mode{m}.jsonl") for m in "AB"
-           if (selector_dir / f"{tag}_mode{m}.jsonl").exists()}
-    if not run:
-        sys.exit(f"No {tag}_modeA.jsonl or {tag}_modeB.jsonl in {selector_dir}")
-    return run
+    """{mode: {frame key: answer record}} for the modes the run has (looked up in all subfolders)."""
+    try:
+        folder = find_run_dir(selector_dir, tag)
+    except ValueError as err:
+        sys.exit(str(err))
+    if folder is None:
+        sys.exit(f"No {tag}_modeA.jsonl or {tag}_modeB.jsonl in {selector_dir} or its subfolders")
+    return {m: read_jsonl(folder / answer_file_name(tag, m)) for m in "AB"
+            if (folder / answer_file_name(tag, m)).exists()}
 
 
 def table(columns: dict[str, dict[str, str]]) -> list[str]:

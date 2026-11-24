@@ -229,6 +229,10 @@ driver, is it safe, does it go through a puddle when a dry path existed, are the
 and writes `outputs/selector/<tag>_mode{A,B}.jsonl` and `<tag>_summary.md`. A stopped run can be
 continued with the same command. Each answer records the picture version; when the drawing
 changes, the script won't add to old answers (use a new `--tag`, or `--fresh` to overwrite).
+Finished runs are sorted into one subfolder per collection (`outputs/selector/phase3a_...` to
+`phase5b_...`; the index is `outputs/selector/README.md`). `evaluate.py --runs <tag>` finds a tag
+in any subfolder; `run_selector.py` refuses a tag that is already in a subfolder unless
+`--out-dir` points there, so a run is never split in two.
 
 ## Approach 2, phase 4: evaluation against baselines
 

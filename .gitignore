@@ -1,5 +1,7 @@
 # Data and generated outputs (never committed)
 /data/
+/outputs/sft/
+/outputs/adapters/
 
 # Python
 __pycache__/

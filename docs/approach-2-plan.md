@@ -498,6 +498,85 @@ smoke tests and for building the data); the training answers **leave out the rea
   masked in 829 (Mode A no-match). **No stop examples:** the only 3 training frames labelled
   "stop" with candidates are also "uncertain" (00002/92–102) and skipped, so the model can't
   learn "stop" from RELLIS (as expected from phase 2: no real stop situations here).
+- **Training on Polaris (2026-11-24, the user ran both; H200):** no errors, no `nan`, gradient
+  norms ≤ 0.4 after the warm-up (≤ 1.6 at the very start).
+
+  | | skip | keep |
+  |---|---|---|
+  | training examples (per epoch) | 6,898 (1,366–1,398) | 8,522 (1,686–1,727) |
+  | validation examples | 520 (73 no-match val frames left out) | 666 |
+  | time | 32.5 min (863 steps) | 39.9 min (1,066 steps) |
+  | training loss, epoch 1 → 5 (mean) | 0.063, 0.032, 0.024, 0.018, 0.012 | 0.055, 0.029, 0.021, 0.016, 0.011 |
+  | validation loss, epoch 1 → 5 | 0.0364, 0.0303, **0.0298**, 0.0334, 0.0357 | 0.0297, 0.0304, 0.0287, **0.0285**, 0.0298 |
+
+  The training loss keeps falling, the validation loss is lowest at epoch 3 (skip) / 4 (keep)
+  and rises after: the first signs of memorizing the training drives. The two validation losses
+  are not comparable (different validation examples), and the loss is dominated by the easy
+  tokens, so the epoch is chosen with the selector on all validation frames (next step).
+- **Epoch selection on validation (2026-11-24, the user ran all 10 adapters on Polaris, every
+  frame; `outputs/eval/val_epochs.md`):** 333 frames with candidates per mode, 100% valid,
+  ~1.1 s per answer (no reasoning). Choice matches the driver, Mode A / B:
+
+  | epoch | 1 | 2 | 3 | 4 | 5 |
+  |---|---|---|---|---|---|
+  | skip | 49 / 51% | 56 / 55% | 52 / 53% | **57 / 57%** | 57 / 56% |
+  | keep | 52 / 53% | 53 / 53% | 54 / 54% | 54 / 54% | 54 / 54% |
+
+  Baselines on these frames: random 33%, straightest 44%, toward the word 47% (Mode B),
+  cheapest 50%, driver oracle 78% (the 73 no-match frames can't be matched by anyone). The
+  zero-shot 4B / 8B were at 25–27% on val (every 4th frame, with reasoning). Findings:
+  - Skip epoch 4 is better than every keep epoch in a paired comparison (it's right where keep
+    is wrong 40–61 times, the reverse 20–39 times; p ≈ 0.01–0.07). Skip epochs 4 and 5 make
+    the same choice in 97% of frames; epochs 2, 4, 5 are within noise of each other.
+  - **Mode B ignores the word:** A and B choose the same candidate in 96–98% of frames; turn
+    frames 30–44% (cheapest 42%, oracle 49%). On val, "toward the word" (47%) is itself below
+    "cheapest", so copying the driver can be learned without the word. To be measured on test
+    with the forced-word test.
+  - No side bias (skip epoch 4: leftmost / middle / rightmost 18 / 55 / 26%, the driver's
+    20 / 58 / 22%); keep epoch 3 leans right (43% rightmost, 7% leftmost).
+  - **Puddles:** "chose a puddle when a dry path existed" (43 frames) 77–88%, above the driver
+    (70%) and random (49%), and rising with the epochs: the model copies the driver, who drove
+    through most puddles, and puddles are only "caution" in the labels.
+  - Ticks and action are trivial on val ("always all" 98%, no stop frames).
+- **User decision (2026-11-24): skip epoch 4 and keep epoch 5 go to the test drive.**
+- **Test results (2026-11-24; the user ran everything on Polaris; 328 frames with candidates,
+  100% valid, ~1.1 s per answer on the H200; `outputs/eval/test_finetuned.md`,
+  `test_ft_{skip,keep}_behaviour.md`):**
+
+  | Mode A / B | driver match | turn frames (83) | at 15 m from the driven path |
+  |---|---|---|---|
+  | random | 43 / 43% | 33 / 33% | 2.85 m |
+  | straightest | 67 / 67% | 43 / 43% | 1.70 m |
+  | cheapest | 48 / 48% | 42 / 42% | 1.89 m |
+  | toward the word (B) | – / 67% | – / 45% | 1.49 m |
+  | zero-shot 4B, no reasoning | 44 / 48% | 18 / 42% | 2.89 / 2.79 m |
+  | zero-shot 4B / 8B (phase 4) | 43 / 48%, 42 / 47% | 18–19 / 35–41% | 2.7–3.5 m |
+  | **fine-tuned skip, epoch 4** | **66 / 66%** | **57 / 54%** | **1.43 / 1.44 m** |
+  | fine-tuned keep, epoch 5 | 59 / 60% | 49 / 51% | 1.63 / 1.59 m |
+  | driver (oracle) | 89 / 89% | 72 / 72% | 1.14 m |
+
+  - **Fine-tuning works:** skip epoch 4 vs the same model zero-shot (no reasoning): right where
+    zero-shot is wrong 110 times, the reverse 35 (Mode A; p < 0.001).
+  - **Skip beats keep** on test too (31 vs 6 frames, p < 0.001): leaving out the frames where no
+    candidate matches the driver helps.
+  - **Tied with "straightest" on this drive** (66 vs 67%; they disagree in ~100 frames, each
+    right in half; p ≈ 0.9). Test 00004 is mostly straight (245 of 328 frames "straight"),
+    which favours "straightest"; the model is much better on turns (57 vs 43%) and worse on
+    straight frames, and its choices end closer to the driven path (1.43 vs 1.70 m at 15 m).
+    On val (twistier) it beat straightest clearly (57 vs 44%). Across both drives it is the
+    only chooser that is good on both.
+  - No side bias (skip: left / middle / right 29 / 54 / 18%, the driver's 21 / 63 / 16%; the
+    zero-shot 8B picks the rightmost 68%). Fewer near misses (4.9%) than random (8.1%) and the
+    driven path itself (10.1%).
+  - **The direction word is ignored after fine-tuning:** forced "bear left" vs "bear right"
+    changes the choice in 5% (skip) / 14% (keep) of frames, against 89% zero-shot; Mode A and
+    B choose the same in 96–97%. Fine-tuning traded instruction following for imitating the
+    driver from the picture.
+  - **History is ignored** (wrong history changes 3–5%; no history gives the same scores), as
+    zero-shot.
+  - Ticks: fine-tuned skip says "all" every time (= "always all", 99%; calls all 6 unsafe
+    stretches safe), keep finds 2–3 of 6; zero-shot is too cautious (99%). Too few unsafe
+    labels (6) to measure safety; no stop frames. Puddles: only 13 frames.
 
 ### Phase 6 (stretch): closed loop
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)

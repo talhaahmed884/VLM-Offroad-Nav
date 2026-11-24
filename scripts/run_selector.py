@@ -17,7 +17,9 @@ dry path existed, are the ticks right (and how often too optimistic), is the act
 
 Output: outputs/selector/<tag>_mode<A|B>.jsonl (one line per frame, with the raw reply) and
 <tag>_summary.md. Already answered frames are skipped when the files exist, so a stopped run
-can be continued with the same command (use --fresh to start over).
+can be continued with the same command (use --fresh to start over). Finished runs are sorted
+by hand into one subfolder per collection (see outputs/selector/README.md); a tag that already
+lives in a subfolder is refused unless --out-dir points there, so no run gets a twin.
 
 Usage (from the repo root; needs requirements-vlm.txt and a GPU):
     python scripts/run_selector.py --limit 5                      # quick look: 5 validation frames
@@ -58,12 +60,14 @@ from offroad.nav.prompts import (  # noqa: E402
 )
 from offroad.nav.visual_prompt import frame_seed  # noqa: E402
 from offroad.nav.scoring import score_answer  # noqa: E402
+from offroad.nav.run_files import find_run_dir  # noqa: E402
 from offroad.nav.selector import prepare_selector_input  # noqa: E402
 from offroad.nav.visual_prompt import PICTURE_VERSION  # noqa: E402
 from offroad.vlm.backend import DEFAULT_MODEL, QUANTIZE_OPTIONS  # noqa: E402
 from offroad.vlm.runner import strip_thinking  # noqa: E402
 
 FRAMES_CSV = REPO_ROOT / "configs" / "decision_frames.csv"
+SELECTOR_ROOT = REPO_ROOT / "outputs" / "selector"
 MAX_NEW_TOKENS = 300
 HISTORY_SETTINGS = ("own", "none", "wrong")
 
@@ -211,6 +215,13 @@ def main() -> None:
     args = parse_args()
     rows = read_frames(args.frames, args.split, args.every, args.limit)
     tag = args.tag or default_tag(args)
+    try:  # finished runs are sorted into subfolders: continue a run where it is, never start a twin
+        elsewhere = find_run_dir(SELECTOR_ROOT, tag)
+    except ValueError as err:
+        sys.exit(str(err))
+    if elsewhere is not None and elsewhere.resolve() != args.out_dir.resolve():
+        sys.exit(f"Run {tag!r} already has answers in {elsewhere}. To continue it, add --out-dir {elsewhere}; "
+                 "for a new run, use another --tag.")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     paths = {m: args.out_dir / f"{tag}_mode{m}.jsonl" for m in args.modes}
     done = {m: ({} if args.fresh else read_done(paths[m])) for m in args.modes}
