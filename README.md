@@ -255,6 +255,29 @@ how good the safe-distance ticks are (against "always all"), and continue / stop
 tests check whether the choice follows the direction word (same frames asked with "bear left"
 and "bear right") and whether a wrong history pulls it. Output: `outputs/eval/<split>_evaluation.md`.
 
+## Approach 2, phase 5: fine-tuning the selector (QLoRA)
+
+```bash
+# On the laptop (needs the RELLIS sequences 00000-00003): render the training data
+python scripts/build_sft_data.py --no-match skip      # -> outputs/sft/nomatch-skip
+python scripts/build_sft_data.py --no-match keep      # -> outputs/sft/nomatch-keep
+# On a GPU machine (Polaris): train, saving an adapter per epoch
+python scripts/train_selector.py --data outputs/sft/nomatch-skip   # -> outputs/adapters/nomatch-skip/epoch1..5
+# Pick the epoch on validation, then ask the test drive with the chosen adapter
+python scripts/run_selector.py --split val --adapter outputs/adapters/nomatch-skip/epoch3
+python scripts/evaluate.py --split val --runs val_ft-nomatch-skip-epoch1 val_ft-nomatch-skip-epoch2 ...
+python scripts/run_selector.py --split test --every 1 --adapter outputs/adapters/nomatch-skip/epoch3
+```
+
+The training examples are the selector's own pictures and prompts, with the answer built from
+the labels (the driver's candidate as the choice, the true safe distances, continue / stop),
+without the reasoning sentence. Against overfitting, every example gets its own random colors,
+listing order and wording, half are mirrored left-right, the history is sometimes left out or
+made wrong, the camera image gets small brightness / contrast / color changes, and rare frames
+(turns, puddles, unsafe candidates) are used more often than easy straight ones. The base model
+stays frozen in 4-bit; only small LoRA adapters are trained. `--no-match skip|keep` builds the
+two datasets of the experiment on frames where no candidate matches the driver.
+
 ## Layout
 
 - `src/offroad/`: library code
@@ -263,7 +286,7 @@ and "bear right") and whether a wrong history pulls it. Output: `outputs/eval/<s
   - `mapping/`: elevation map and geometric cost map
   - `planning/`: A\* and the geometric baseline
   - `nav/`: approach 2: driven paths from the poses, direction words, decision frames, candidate paths and their labels, the VLM's picture and prompts, answer checking and scoring, terrain numbers per path, and the evaluation with baselines
-  - `vlm/`: running a local VLM (Transformers)
+  - `vlm/`: running a local VLM (Transformers), with an optional fine-tuned LoRA adapter; fine-tuning helpers
   - `eval/`: ground truth along a path (LiDAR + camera labels) and safety metrics
   - `viz/`: pictures
 - `scripts/`: runnable entry points

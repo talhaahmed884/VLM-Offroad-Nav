@@ -60,13 +60,42 @@ Unsafe means: deep water, or something the vehicle would hit (tree trunk, rock, 
 Then choose one candidate to drive on. {preference} The action is "stop" only if no candidate is safe to at least the 5 m dot; otherwise "continue".
 
 Answer with JSON only, exactly in this format (one safe_until entry per candidate):
-{{"safe_until": {{"<color>": "<all, tick 2, tick 1 or none>"}}, "choice": "<color>", "action": "<continue or stop>", "reasoning": "<one short sentence>"}}"""
+{answer_format}"""
 
-_TASK_A = "keep driving forward safely until you are told to stop. There is no destination."
-_TASK_B = ("keep driving forward safely until you are told to stop. There is no destination, but the "
-           "operator asked you to go \"{word}\" ({meaning}).")
-_PREFER_A = "Prefer following the trail or track when there is one."
-_PREFER_B = "Among the safe candidates, choose the one that best follows the direction \"{word}\"."
+_FORMAT_WITH_REASONING = ('{"safe_until": {"<color>": "<all, tick 2, tick 1 or none>"}, "choice": "<color>", '
+                          '"action": "<continue or stop>", "reasoning": "<one short sentence>"}')
+# Phase 5 (user decision 2026-11-23): the fine-tuned model is trained and asked without the reasoning
+# field, since the training data has no human-written reasons.
+_FORMAT_WITHOUT_REASONING = ('{"safe_until": {"<color>": "<all, tick 2, tick 1 or none>"}, "choice": "<color>", '
+                             '"action": "<continue or stop>"}')
+
+# Wordings of the task and the preference (phase 5: training uses all of them, so the model learns
+# the meaning rather than one exact sentence). Wording 0 is the one used in phases 3-4 and for evaluation.
+_TASKS_A = (
+    "keep driving forward safely until you are told to stop. There is no destination.",
+    "drive on safely and keep going until someone tells you to stop. There is no goal location.",
+    "continue driving forward safely; there is no destination, so keep going until told to stop.",
+)
+_TASKS_B = (
+    "keep driving forward safely until you are told to stop. There is no destination, but the "
+    "operator asked you to go \"{word}\" ({meaning}).",
+    "drive on safely and keep going until someone tells you to stop. There is no goal location, but "
+    "the operator wants you to go \"{word}\" ({meaning}).",
+    "continue driving forward safely until told to stop. There is no destination; the operator's "
+    "direction is \"{word}\" ({meaning}).",
+)
+_PREFERS_A = (
+    "Prefer following the trail or track when there is one.",
+    "If there is a trail or track, prefer staying on it.",
+    "When a trail or track is visible, prefer the candidate that follows it.",
+)
+_PREFERS_B = (
+    "Among the safe candidates, choose the one that best follows the direction \"{word}\".",
+    "Of the safe candidates, pick the one that matches the direction \"{word}\" best.",
+    "Choose the safe candidate that goes most in the direction \"{word}\".",
+)
+WORDINGS = len(_TASKS_A)
+_TASK_A, _TASK_B, _PREFER_A, _PREFER_B = _TASKS_A[0], _TASKS_B[0], _PREFERS_A[0], _PREFERS_B[0]
 
 
 @dataclass
@@ -114,23 +143,28 @@ def wrong_history(entries: list[HistoryEntry], seed: int) -> tuple[list[HistoryE
 
 
 def build_prompt(colors: list[str], mode: str = "A", direction: str | None = None,
-                 history: str = "none.") -> str:
+                 history: str = "none.", reasoning: bool = True, wording: int = 0) -> str:
     """The text prompt for one frame.
 
     colors: candidate color names in the order to list them (already shuffled by the caller).
     direction: Mode B's word (required in Mode B, ignored in Mode A). history: from `history_text`.
+    reasoning: ask for the one-sentence reasoning (phases 3-4: yes; the fine-tuned model: no).
+    wording: which wording of the task and preference (0 = the evaluation wording; training uses all).
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+    if not 0 <= wording < WORDINGS:
+        raise ValueError(f"wording must be 0..{WORDINGS - 1}, got {wording}")
     if mode == "B":
         if direction not in DIRECTION_MEANINGS:
             raise ValueError(f"Mode B needs a direction word from {list(DIRECTION_MEANINGS)}, got {direction!r}")
-        task = _TASK_B.format(word=direction, meaning=DIRECTION_MEANINGS[direction])
-        preference = _PREFER_B.format(word=direction)
+        task = _TASKS_B[wording].format(word=direction, meaning=DIRECTION_MEANINGS[direction])
+        preference = _PREFERS_B[wording].format(word=direction)
     else:
-        task, preference = _TASK_A, _PREFER_A
+        task, preference = _TASKS_A[wording], _PREFERS_A[wording]
+    answer_format = _FORMAT_WITH_REASONING if reasoning else _FORMAT_WITHOUT_REASONING
     return _INTRO.format(task=task, colors=", ".join(colors), history=history) + "\n" + \
-        _RULES.format(preference=preference)
+        _RULES.format(preference=preference, answer_format=answer_format)
 
 
 # --- the answer checker ---

@@ -197,16 +197,21 @@ def draw_visual_prompt(
     ground_z: np.ndarray,
     spec: GridSpec,
     width: int = IMAGE_WIDTH,
+    mirror: bool = False,
 ) -> tuple[np.ndarray, list[bool]]:
     """The VLM's picture: the (H, W, 3) RGB camera image shrunk to `width` px, with the paths drawn on it.
 
     paths_xy: one (K, 2) FLU path per candidate; colors: (name, RGB) for each, same order.
     ground_z: the cost map's ground height (for placing the lines on the ground).
+    mirror: flip the image left-right and draw the paths at their mirrored places (phase 5 training
+        augmentation: a left turn becomes a right turn). The color names are written unmirrored.
     Returns (picture, visible): visible[k] says whether path k shows up in the picture at all.
     """
     full_size = image.shape[:2]
     scale = width / full_size[1]
     picture = cv2.resize(image, (width, round(full_size[0] * scale)), interpolation=cv2.INTER_AREA)
+    if mirror:
+        picture = np.ascontiguousarray(picture[:, ::-1])
     line = max(2, round(4 * width / IMAGE_WIDTH))
     dot = line + 2
     font_scale = 0.5 * width / IMAGE_WIDTH
@@ -226,6 +231,9 @@ def draw_visual_prompt(
                 tick_uv = project_flu(np.array([[p[0], p[1], np.interp(d, s, z)]]), calib, full_size)[0] * scale
                 if np.isfinite(tick_uv).all():
                     ticks.append(tick_uv)
+        if mirror:  # u -> (width - 1) - u, the same flip as the image
+            uv = uv * [-1.0, 1.0] + [picture.shape[1] - 1, 0.0]
+            ticks = [t * [-1.0, 1.0] + [picture.shape[1] - 1, 0.0] for t in ticks]
         uvs.append(uv)
         all_ticks.append(ticks)
 

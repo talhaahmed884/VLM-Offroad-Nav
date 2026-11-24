@@ -61,6 +61,12 @@ STEPS = [
          ("scripts/run_selector.py", "--limit", "3", "--tag", "smoke", "--fresh"), slow=True),
     Step("eval", "phase 4: baselines on the test frames (random, straightest, cheapest, the driver)",
          ("scripts/evaluate.py", "--split", "test")),
+    Step("sft", "phase 5: a tiny fine-tuning dataset (6 frames per split, 1 epoch) -> outputs/sft/smoke",
+         ("scripts/build_sft_data.py", "--no-match", "keep", "--limit-frames", "6", "--epochs", "1", "--name", "smoke")),
+    # Needs the GPU (~1-2 min with loading), so it only runs with --full or --only.
+    Step("train", "phase 5: 2 QLoRA training steps on the tiny dataset -> outputs/adapters/smoke",
+         ("scripts/train_selector.py", "--data", "outputs/sft/smoke", "--max-steps", "2", "--grad-accum", "2",
+          "--eval-limit", "2", "--workers", "0"), slow=True),
 ]
 
 

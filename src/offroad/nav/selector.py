@@ -44,11 +44,15 @@ def prepare_selector_input(
     mode: str = "A",
     direction: str | None = None,
     history: str = "none.",
+    reasoning: bool = True,
 ) -> SelectorInput:
-    """Random (but repeatable) colors and listing order, the drawn picture, and the prompt for one frame."""
+    """Random (but repeatable) colors and listing order, the drawn picture, and the prompt for one frame.
+
+    reasoning: ask for the one-sentence reasoning (zero-shot); the fine-tuned model is asked without it.
+    """
     palette = assign_colors(len(candidates), frame_seed(sequence, frame))
     colors = [name for name, _ in palette]
     listed = shuffled(colors, frame_seed(sequence, frame, salt=1))
     picture, visible = draw_visual_prompt(image, calib, [c.xy for c in candidates], palette, ground_z, spec)
-    prompt = build_prompt(listed, mode, direction, history)
+    prompt = build_prompt(listed, mode, direction, history, reasoning=reasoning)
     return SelectorInput(picture, colors, listed, prompt, visible)

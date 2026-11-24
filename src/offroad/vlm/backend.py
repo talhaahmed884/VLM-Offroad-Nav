@@ -43,8 +43,13 @@ class TransformersVlm:
         quantize: str = "4bit",
         max_new_tokens: int = 512,
         quantize_vision: bool = False,
+        adapter: str | None = None,
     ):
-        """quantize_vision: also quantize the vision encoder (saves ~1 GB for 8B models, may cost accuracy)."""
+        """quantize_vision: also quantize the vision encoder (saves ~1 GB for 8B models, may cost accuracy).
+
+        adapter: folder of a LoRA adapter from scripts/train_selector.py (phase 5), loaded on top of the
+        model; None = the plain model.
+        """
         if quantize not in QUANTIZE_OPTIONS:
             raise ValueError(f"quantize must be one of {QUANTIZE_OPTIONS}, got {quantize!r}")
         import torch
@@ -72,6 +77,11 @@ class TransformersVlm:
         started = time.perf_counter()
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
+        self.adapter = adapter
+        if adapter is not None:
+            from peft import PeftModel
+
+            self.model = PeftModel.from_pretrained(self.model, adapter)
         self.model.eval()
         self.load_seconds = time.perf_counter() - started
 

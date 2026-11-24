@@ -453,6 +453,52 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
 - **8B:** decide after the 4B results. Fine-tuning an 8B doesn't fit in 8 GB; it would run on the
   Polaris H200.
 
+**User decisions (2026-11-23, at the start of phase 5):** train on **Polaris** (the laptop is for
+smoke tests and for building the data); the training answers **leave out the reasoning field**
+(no human-written reasons exist), so the fine-tuned model is also asked without it
+(`build_prompt(..., reasoning=False)`; the zero-shot model can be asked the same way with
+`run_selector.py --no-reasoning` for a like-for-like comparison).
+
+**Status (2026-11-23): written and smoke-tested on the laptop; the user has not run it yet.**
+- **Data** (`nav/sft.py`, `scripts/build_sft_data.py` → `outputs/sft/<name>/`): pictures are
+  rendered on the laptop (JPEG, 800 × 500), so Polaris needs only this folder. Per training
+  frame and epoch, `frame_weight` examples on average: easy straight 0.5, turn 1.5, puddle 2,
+  unsafe candidate 3, stop 3 (~1,700 per epoch). Each example draws its own mode (A / B 50%),
+  mirroring (50%: picture, word and history flipped; the color names stay readable), history
+  (driver 55%, none 30%, wrong 15%), wording (3 wordings of the task and preference;
+  evaluation uses wording 0, unchanged from phases 3–4), colors, listing order, and photometric
+  change of the camera image (±15% brightness / contrast / saturation, slight blur in 30%) before
+  the lines are drawn. History entries are the driver's candidate's end bearing at the earlier
+  decision frames (like the chosen candidate's at run time). Frames whose candidates have on
+  average more than half their points without ground truth are skipped (14 training frames).
+  Validation examples: one per frame and mode, plain (as at evaluation), for the validation loss.
+  `--no-match skip|keep` makes the two datasets of the experiment; in "keep", Mode A examples of
+  no-match frames have the choice masked out of the loss.
+- **Target:** `{"safe_until": {...in the listed order...}, "choice": ..., "action": ...}` from
+  the labels; the choice is the driver's (closest) candidate; "stop" when no candidate is safe to
+  tick 1.
+- **Training** (`vlm/finetune.py`, `scripts/train_selector.py` → `outputs/adapters/<name>/`):
+  the base model loaded in 4-bit exactly as for the selector; LoRA rank 64, alpha 128, dropout
+  0.05 on the language model's linear layers (132 M trainable parameters, 2.9%); learning rate
+  1e-4, cosine, 3% warm-up; batch 1 × 8 accumulation; gradient checkpointing. The sequence is
+  the selector's prompt (the same chat template, checked token for token) plus the target and
+  `<|im_end|>`; only the answer is learned. The data is read in order, and the adapter is saved
+  at the end of each epoch (`epoch1` … `epoch5`) with the validation loss logged.
+- **Early stopping by choosing the epoch:** ask the validation frames with each epoch's adapter
+  (`run_selector.py --split val --adapter ...`), compare with `evaluate.py --split val`, and keep
+  the best; only that one goes to the test drive.
+- **Selector:** `run_selector.py --adapter <folder>` (tag `<split>_ft-<data>-<epoch>`, asked without
+  reasoning) and `--no-reasoning`; each answer records `adapter` and `reasoning_asked`, and the
+  script refuses to mix answers from different adapters or prompts in one file.
+- **Smoke test (laptop):** 3 training steps on a 6-frame dataset ran (~6 s per step on the RTX
+  5060), saved an adapter, and the selector loaded it and answered in the short format.
+- **Full build check ("keep", scratchpad):** 8,522 training examples (1,686–1,727 per epoch),
+  666 validation examples, 1.5 GB, ~6 min with 4 workers. Classes: turn 4,422, easy 1,865,
+  unsafe 1,515, puddle 720; mirrored 51%; history driver / none / wrong 55 / 30 / 16%; choice
+  masked in 829 (Mode A no-match). **No stop examples:** the only 3 training frames labelled
+  "stop" with candidates are also "uncertain" (00002/92–102) and skipped, so the model can't
+  learn "stop" from RELLIS (as expected from phase 2: no real stop situations here).
+
 ### Phase 6 (stretch): closed loop
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)
   would allow real closed-loop driving. Revisit only if the offline results call for it.
@@ -495,7 +541,7 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
 | 8 | Mode B directions | "bear left", "slight left", "straight", "slight right", "bear right", from the driven path ~50 m ahead |
 | 9 | History | the last 3 decisions as a short text summary |
 | 10 | Image size | 800×600 |
-| 11 | Fine-tuning | LoRA rank 64, learning rate 1e-4, 5 epochs (DriveVLN's); GRPO decided after the SFT results |
+| 11 | Fine-tuning | LoRA rank 64, learning rate 1e-4, 5 epochs (DriveVLN's); GRPO decided after the SFT results. 2026-11-23: trained on Polaris; answers without the reasoning field |
 | 12 | Models in the report | Qwen3-VL-4B zero-shot and fine-tuned (main); the 8B zero-shot as a reference |
 | 13 | Approach-1 comparison | approach 1's geometric baseline on the same test frames, same safety metrics; its VLM hybrid only if time allows (needs new 8B runs, ~1.5 h) |
 

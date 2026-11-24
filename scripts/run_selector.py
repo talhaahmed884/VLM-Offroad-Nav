@@ -68,9 +68,19 @@ MAX_NEW_TOKENS = 300
 HISTORY_SETTINGS = ("own", "none", "wrong")
 
 
+def asks_reasoning(args: argparse.Namespace) -> bool:
+    """The fine-tuned model is trained without the reasoning field, so it is asked without it."""
+    return not (args.no_reasoning or args.adapter)
+
+
 def default_tag(args: argparse.Namespace) -> str:
-    """<split>_<model short name>, plus _nohist / _wronghist and _dir-<word> for the phase 4 tests."""
-    tag = f"{args.split}_{args.model.split('/')[-1]}"
+    """<split>_<model short name> (or ft-<data>-<epoch> with an adapter), plus _nohist / _wronghist,
+    _dir-<word> for the phase 4 tests, and _noreason for a plain model asked without reasoning."""
+    if args.adapter:
+        adapter = Path(args.adapter)
+        tag = f"{args.split}_ft-{adapter.parent.name}-{adapter.name}"
+    else:
+        tag = f"{args.split}_{args.model.split('/')[-1]}" + ("" if asks_reasoning(args) else "_noreason")
     tag += {"own": "", "none": "_nohist", "wrong": "_wronghist"}[args.history]
     return tag + (f"_dir-{args.direction.replace(' ', '-')}" if args.direction else "")
 
@@ -89,6 +99,11 @@ def parse_args() -> argparse.Namespace:
                              "(phase 4 test: does the choice follow the word?); use with --modes B")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--quantize", choices=QUANTIZE_OPTIONS, default="4bit")
+    parser.add_argument("--adapter", default=None,
+                        help="a fine-tuned LoRA adapter folder (phase 5, e.g. outputs/adapters/nomatch-skip/epoch3); "
+                             "the model is then asked without the reasoning field, as it was trained")
+    parser.add_argument("--no-reasoning", action="store_true",
+                        help="ask the plain model without the reasoning field too (the fine-tuned model's prompt)")
     parser.add_argument("--tag", default=None, help="output name (default: <split>_<model short name>)")
     parser.add_argument("--save-images", type=int, default=5, help="save the first N pictures (default: 5)")
     parser.add_argument("--fresh", action="store_true", help="ignore earlier answers in the output files")
@@ -204,6 +219,10 @@ def main() -> None:
         if old:  # answers to an older drawing of the candidates: don't mix them with new ones
             sys.exit(f"{paths[m].name} holds answers to picture version {sorted(old)}, this code draws version "
                      f"{PICTURE_VERSION}. Use another --tag (keeps the old answers) or --fresh (overwrites them).")
+        setups = {(r.get("adapter"), r.get("reasoning_asked", True)) for r in done[m].values()}
+        if setups - {(args.adapter, asks_reasoning(args))}:  # another model or prompt: don't mix
+            sys.exit(f"{paths[m].name} holds answers from another adapter / prompt {sorted(setups, key=str)}. "
+                     "Use another --tag or --fresh.")
     todo = [r for r in rows if any((r["sequence"], int(r["frame"])) not in done[m] for m in args.modes)]
     print(f"{len(rows)} {args.split} frames (every {args.every}), modes {' '.join(args.modes)}, "
           f"history {args.history}; {len(rows) - len(todo)} already answered", flush=True)
@@ -212,8 +231,9 @@ def main() -> None:
     if todo:
         from offroad.vlm.backend import TransformersVlm
 
-        vlm = TransformersVlm(args.model, quantize=args.quantize, max_new_tokens=MAX_NEW_TOKENS)
-        print(f"Loaded {args.model} ({args.quantize}) in {vlm.load_seconds:.0f} s", flush=True)
+        vlm = TransformersVlm(args.model, quantize=args.quantize, max_new_tokens=MAX_NEW_TOKENS, adapter=args.adapter)
+        print(f"Loaded {args.model} ({args.quantize}){f' + adapter {args.adapter}' if args.adapter else ''} "
+              f"in {vlm.load_seconds:.0f} s", flush=True)
 
     id_to_name, _ = load_ontology(args.root)
     spec = GridSpec()
@@ -251,7 +271,8 @@ def main() -> None:
                           "direction": (args.direction or row["direction"]) if mode == "B" else row["direction"],
                           "driver_direction": row["direction"], "direction_forced": bool(args.direction),
                           "history_setting": args.history, "history_injected": None,
-                          "picture_version": PICTURE_VERSION,
+                          "picture_version": PICTURE_VERSION, "adapter": args.adapter,
+                          "reasoning_asked": asks_reasoning(args),
                           "real_choice": has_real_choice(fc.labels), "asked": bool(fc.candidates),
                           "colors": [], "labels": [asdict(lab) for lab in fc.labels]}
                 if not fc.candidates:
@@ -268,7 +289,8 @@ def main() -> None:
                     hist = history_text(history[mode], timestamp)
                 selector_input = prepare_selector_input(frame.image, frame.calib, fc.candidates,
                                                         result.costmap.ground_z, spec, key[0], key[1], mode,
-                                                        record["direction"] or None, hist)
+                                                        record["direction"] or None, hist,
+                                                        reasoning=asks_reasoning(args))
                 reply = vlm.generate(selector_input.picture, selector_input.prompt)
                 text = strip_thinking(reply.text)
                 answer = parse_answer(text, selector_input.colors)
@@ -300,7 +322,8 @@ def main() -> None:
 
     per_mode = {m: [r for r in read_done(paths[m]).values() if (r["sequence"], r["frame"]) in
                     {(row["sequence"], int(row["frame"])) for row in rows}] for m in args.modes}
-    title = (f"Selector: {args.model} ({args.quantize}), {args.split} every {args.every}, "
+    title = (f"Selector: {args.model} ({args.quantize}){f' + adapter {args.adapter}' if args.adapter else ''}, "
+             f"reasoning {'asked' if asks_reasoning(args) else 'not asked'}, {args.split} every {args.every}, "
              f"history {args.history}, {CHOSEN_VARIANT} candidates, picture version {PICTURE_VERSION}")
     report = write_summary(args.out_dir / f"{tag}_summary.md", title, per_mode)
     print("\n" + report)
