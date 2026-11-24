@@ -385,6 +385,32 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
   the 4B and 8B 25–27%. So the geometric planner's own pick is far ahead of the zero-shot VLM. The
   driver's center line runs over much less "mud" than the candidates (1.7% vs ~10%): the wheels
   are in the ruts, the center on the grass between them, while candidates follow the ruts.
+- **Zero-shot results on the test drive (2026-11-23; the user ran everything on Polaris; all 331
+  frames, 328 with candidates; `outputs/eval/test_evaluation.md`):**
+  - **Choice matches the driver:** Mode A: random 43%, straightest 67%, cheapest 48%, oracle 89%;
+    4B 43% (no history 45%, wrong history 45%), 8B 42%. Mode B: toward the word 67%; 4B 48%,
+    8B 47%. In turn frames (83 of 328, mostly "slight left"): Mode A 4B 18%, 8B 19% (random 33%,
+    straightest 43%); Mode B 4B 41%, 8B 35% (toward the word 45%). So zero-shot the VLM chooses
+    at chance level, far below "straightest"; the test drive is mostly straight (245 of 328
+    frames), which is why straightest and random score higher than on validation.
+  - **Position bias:** the 8B picks the rightmost candidate in 222 of 326 Mode A frames (68%);
+    the 4B prefers middle / right.
+  - **The word is understood:** with "bear left" vs "bear right" the choice ends further left
+    under "bear left" in 89% of 326 frames, never the reverse; rightmost under "bear right" 97%,
+    leftmost under "bear left" only 48% (the right lean again). In normal Mode B, where the word
+    is mostly "straight", it doesn't pick the straightest.
+  - **History is ignored:** a made-up sharp turn changes the choice in only 5% (Mode A) / 8%
+    (Mode B) of frames, as often away from it as toward it; no history ≈ own history.
+  - **Safety and stop can't be measured on this drive:** only 6 of 1,123 candidates have an unsafe
+    stretch (no model called them safe past it; "always all" got all 6 wrong), 7 are labelled
+    "tick 2", and there are no stop frames. Ticks: the 4B says "all" almost never (8–17 of
+    1,116), the 8B is right 40% / 50% (A / B), both never too optimistic.
+  - **Puddles** (13 frames only): the 8B took the puddle when a dry path existed in 31% (4 of
+    13), random 46%, the 4B 54%. Terrain, near misses and slope are about the same for every
+    chooser and similar to the driven path.
+  - **Target for phase 5:** beat "straightest" / "toward the word" (67%) on driver match, and
+    show the ticks distinguish paths; the oracle (89%) is the ceiling.
+- **Phase 4 is done** (closed by the user, 2026-11-23).
 
 ### Phase 5: fine-tuning
 - **QLoRA supervised fine-tuning of Qwen3-VL-4B on the laptop** (RTX 5060, 8 GB): the base model
