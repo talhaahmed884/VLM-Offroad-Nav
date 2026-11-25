@@ -375,6 +375,19 @@ to build two cost grids and compare them ("strict" = approach 1's cost map, wher
   too optimistic / too cautious, "unsafe stretch called safe past it", and per true answer type.
   Continue / stop: "always continue" vs runs, stop recall and precision. All columns use the
   same frames (those every run answered).
+  **Added 2026-11-24 (phase 5, for the final report):** 95% intervals (Wilson for shares, normal
+  approximation for means), straight vs turn frames, side of wrong choices (left / right of the
+  driver's candidate), chosen position, distance at 15 m (mean with interval, median, 90th
+  percentile), ADE (mean over 5 / 10 / 15 m), ticks as hazard flags (precision / recall / F1)
+  and mean tick error, stop F1, speed (mean / median / 95th percentile seconds), and paired
+  comparisons (every run vs straightest and cheapest, plus `--paired`; exact McNemar).
+  Precision / recall / F1 are used only for the yes/no detections (hazard flags, stop); the
+  path choice is one pick among 2–4 candidates, where accuracy is the right measure.
+  The user regenerated all five reports with them (2026-11-24; identical to my rebuild). Paired
+  tests, skip epoch 4, Mode A: on **val** it beats straightest (right where straightest is wrong
+  66 times vs 25, p < 0.001) and cheapest (54 vs 34, p = 0.042); on **test** it ties
+  straightest (50 vs 51, p = 1.0) and beats cheapest (81 vs 22, p < 0.001) and the zero-shot 4B
+  (110 vs 35, p < 0.001). ADE: val 1.23 m (straightest 1.39), test 0.98 m (straightest 1.07).
 - **Behaviour tests** (`run_selector.py`): `--direction WORD` gives Mode B the same word in every
   frame (`evaluate.py --direction-test LEFT RIGHT`: followed / ignored / reversed, and how often
   the leftmost / rightmost is picked); `--history wrong` replaces the latest history entry with a
@@ -459,7 +472,17 @@ smoke tests and for building the data); the training answers **leave out the rea
 (`build_prompt(..., reasoning=False)`; the zero-shot model can be asked the same way with
 `run_selector.py --no-reasoning` for a like-for-like comparison).
 
-**Status (2026-11-23): written and smoke-tested on the laptop; the user has not run it yet.**
+**Status (2026-11-24): done, closed by the user.** Written and smoke-tested 2026-11-23; trained,
+validated and tested on Polaris 2026-11-24 (details below). **Reported model: skip epoch 4.**
+Decisions at closing (the user accepted my recommendations, 2026-11-24):
+- **GRPO: not done.** It wouldn't fix the main weakness (the word is ignored), and RELLIS has
+  almost no unsafe or stop situations to reward.
+- **8B fine-tuning: not done.** The zero-shot 8B was no better than the 4B (42 vs 43%) and
+  leaned right; the fine-tuned 4B answers the research question.
+- **General-ability check: moved to phase 6.** It needs candidates (LiDAR) on non-RELLIS
+  scenes, which only the simulator gives.
+- **The ignored direction word is reported as a finding and limitation**, not fixed (a fix would
+  be another training round with examples whose word is changed and whose target follows it).
 - **Data** (`nav/sft.py`, `scripts/build_sft_data.py` → `outputs/sft/<name>/`): pictures are
   rendered on the laptop (JPEG, 800 × 500), so Polaris needs only this folder. Per training
   frame and epoch, `frame_weight` examples on average: easy straight 0.5, turn 1.5, puddle 2,
@@ -602,7 +625,8 @@ smoke tests and for building the data); the training answers **leave out the rea
 3. **Candidates:** cost-map fan + A\* first; curved anchors as an optional later comparison.
 4. **Model and fine-tuning:** Qwen3-VL-4B, QLoRA on the laptop. DriveVLN used Qwen2.5-VL-3B; the
    4B is the closest current model of that size, framed as a starting point for future work.
-   8B decided after the 4B results (fine-tuning it would need the H200).
+   8B decided after the 4B results (fine-tuning it would need the H200). 2026-11-24: not
+   fine-tuned; the 8B stays a zero-shot reference.
 5. **Cost grid for the candidates:** relaxed (only hard obstacles over 1.5 m block; lower
    vegetation costs 10), chosen after the phase 2 comparison with the strict grid.
 
@@ -620,7 +644,7 @@ smoke tests and for building the data); the training answers **leave out the rea
 | 8 | Mode B directions | "bear left", "slight left", "straight", "slight right", "bear right", from the driven path ~50 m ahead |
 | 9 | History | the last 3 decisions as a short text summary |
 | 10 | Image size | 800×600 |
-| 11 | Fine-tuning | LoRA rank 64, learning rate 1e-4, 5 epochs (DriveVLN's); GRPO decided after the SFT results. 2026-11-23: trained on Polaris; answers without the reasoning field |
+| 11 | Fine-tuning | LoRA rank 64, learning rate 1e-4, 5 epochs (DriveVLN's); GRPO decided after the SFT results. 2026-11-23: trained on Polaris; answers without the reasoning field. 2026-11-24: no GRPO; reported adapter = "skip" data, epoch 4 |
 | 12 | Models in the report | Qwen3-VL-4B zero-shot and fine-tuned (main); the 8B zero-shot as a reference |
 | 13 | Approach-1 comparison | approach 1's geometric baseline on the same test frames, same safety metrics; its VLM hybrid only if time allows (needs new 8B runs, ~1.5 h) |
 

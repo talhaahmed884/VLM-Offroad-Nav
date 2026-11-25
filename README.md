@@ -259,6 +259,15 @@ how good the safe-distance ticks are (against "always all"), and continue / stop
 tests check whether the choice follows the direction word (same frames asked with "bear left"
 and "bear right") and whether a wrong history pulls it. Output: `outputs/eval/<split>_evaluation.md`.
 
+Error measures for the final report (added in phase 5): shares come with a 95% confidence
+interval; the distance from the driven path at 15 m with interval, median and 90th percentile,
+and the mean over 5 / 10 / 15 m (ADE, as in trajectory-prediction papers); straight vs turn
+frames; on which side wrong choices fall and where the chosen candidate sits (left / middle /
+right); the ticks as hazard flags ("not safe to the end": precision / recall / F1) and the mean
+tick error; stop F1; seconds per answer; and **paired comparisons**: every run is compared frame
+by frame with the straightest and the cheapest candidate (only the frames where the two disagree
+count; exact McNemar p-value), plus any `--paired FIRST SECOND` you add (run tags or baseline names).
+
 ## Approach 2, phase 5: fine-tuning the selector (QLoRA)
 
 ```bash
@@ -281,6 +290,35 @@ made wrong, the camera image gets small brightness / contrast / color changes, a
 (turns, puddles, unsafe candidates) are used more often than easy straight ones. The base model
 stays frozen in 4-bit; only small LoRA adapters are trained. `--no-match skip|keep` builds the
 two datasets of the experiment on frames where no candidate matches the driver.
+
+### Phase 5 results (done 2026-11-24)
+
+Both datasets were trained for 5 epochs on Polaris (H200, 33–40 min each). The epoch was chosen
+on the validation drive (00003): **"skip" (no-match frames left out), epoch 4**, the reported
+model. The test drive (00004, 328 frames with candidates) was used only once, for the final
+numbers (`outputs/eval/test_finetuned.md`; Mode A):
+
+| chooser | matches the driver [95% interval] | turn frames | mean distance from the driven path (ADE) |
+|---|---|---|---|
+| random | 43% [38, 48] | 33% | 1.57 m |
+| zero-shot 4B (asked without reasoning) | 44% [38, 49] | 18% | 1.53 m |
+| cheapest candidate | 48% [43, 54] | 42% | 1.26 m |
+| straightest candidate | 67% [62, 72] | 43% | 1.07 m |
+| **fine-tuned 4B, skip epoch 4** | **66% [61, 71]** | **57%** | **0.98 m** |
+| fine-tuned 4B, keep epoch 5 | 59% [53, 64] | 49% | 1.06 m |
+| driver's candidate (best possible) | 89% [86, 92] | 72% | 0.75 m |
+
+- Fine-tuning helps: right where the zero-shot model is wrong 110 times, the reverse 35
+  (p < 0.001). Leaving out the no-match frames helps too (skip vs keep: 31 vs 6, p < 0.001).
+- The test drive is mostly straight, so "straightest" ties the model there (50 vs 51 frames);
+  on the twistier validation drive the model beats it (56 vs 44%; 66 vs 25 frames, p < 0.001).
+  The model is better on turns and its paths end closer to the driver's.
+- Limitations: after fine-tuning the model **ignores the direction word** (a forced "bear left"
+  vs "bear right" changes 5% of its choices; zero-shot 89%) and the history; it says "safe all"
+  for every path. RELLIS has 7 unsafe stretches and no stop situations on the test drive, so
+  safety and stop can't be measured offline (closed loop, phase 6).
+- Not done (decided at closing): GRPO, fine-tuning the 8B; the check on non-RELLIS scenes moves
+  to phase 6.
 
 ## Layout
 

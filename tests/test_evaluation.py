@@ -7,6 +7,7 @@ from offroad.mapping.elevation import GridSpec
 from offroad.nav.candidate_metrics import NEAR_MISS_M, candidate_metrics
 from offroad.nav.evaluation import (
     answer_weights,
+    binary_scores,
     choose_cheapest,
     choose_driver,
     choose_random,
@@ -15,10 +16,16 @@ from offroad.nav.evaluation import (
     direction_test,
     frame_numbers,
     history_test,
+    mcnemar_p,
+    mean_interval,
     offset_from_driven,
+    one_hot,
+    paired_comparison,
     summarize_actions,
     summarize_choices,
+    summarize_speed,
     summarize_ticks,
+    wilson_interval,
 )
 from offroad.nav.labels import cells_along
 from offroad.nav.prompts import WRONG_TURN_DEG, HistoryEntry, wrong_history
@@ -99,7 +106,7 @@ def test_frame_numbers_weighted():
 def test_summaries():
     frames = [three(direction="bear left"), three()]
     s = summarize_choices(frames, [choose_driver(f) for f in frames])
-    assert s["choice matches the driver"] == "100%" and s["frames with a choice"] == "2/2"
+    assert s["choice matches the driver [95% interval]"].startswith("100% [") and s["frames with a choice"] == "2/2"
     s = summarize_choices(frames, [choose_cheapest(frames[0]), np.zeros(3)])
     assert s["frames with a choice"] == "1/2" and s["chose a puddle when a dry path existed"] == "100%"
 
@@ -110,6 +117,57 @@ def test_summaries():
     actions = summarize_actions([three(stop=True), three()], ["stop", "stop"])
     assert actions["stop frames (label) / said stop / both"] == "1 / 2 / 1"
     assert actions["stop recall / precision"] == "1/1 / 1/2" and actions["action correct"] == "50%"
+    assert actions["stop F1"] == "0.67"
+
+
+# --- error measures for the report ---
+
+def test_intervals_and_mcnemar():
+    lo, hi = wilson_interval(218, 328)  # the reported model's test accuracy, 66.5%
+    assert (round(lo, 3), round(hi, 3)) == (0.612, 0.714)
+    assert wilson_interval(0, 10)[0] == 0.0 and wilson_interval(10, 10)[1] == 1.0
+    m, lo, hi = mean_interval([1.0, 2.0, 3.0])
+    assert m == 2.0 and hi - m == pytest.approx(1.96 / np.sqrt(3))
+    assert mcnemar_p(0, 0) == 1.0 and mcnemar_p(5, 5) == 1.0
+    assert mcnemar_p(10, 0) == pytest.approx(2 / 2 ** 10)  # all 10 disagreements one way
+    assert mcnemar_p(110, 35) < 1e-9 and mcnemar_p(50, 51) > 0.9
+
+
+def test_binary_scores():
+    s = binary_scores([True, True, False, False], [True, False, True, False])
+    assert (s["tp"], s["fp"], s["fn"]) == (1, 1, 1) and s["precision"] == s["recall"] == s["f1"] == 0.5
+    none_flagged = binary_scores([True, False], [False, False])
+    assert none_flagged["precision"] is None and none_flagged["recall"] == 0.0 and none_flagged["f1"] is None
+    assert binary_scores([False], [False])["recall"] is None
+
+
+def test_new_choice_rows():
+    f = three()  # driver's candidate is the middle one (index 1)
+    left = frame_numbers(f, one_hot(3, 0))
+    assert left["wrong_left"] == 1.0 and left["wrong_right"] == 0.0 and left["pos_left"] == 1.0
+    assert left["ade_m"] == pytest.approx(np.mean([left[f"offset_{d}m"] for d in (5, 10, 15)]))
+    frames = [three(), three(direction="slight right"), three()]
+    s = summarize_choices(frames, [one_hot(3, 1), one_hot(3, 2), one_hot(3, 0)])
+    assert s["wrong choices: left / right of the driver's candidate"] == "50% / 50%"
+    assert s["chosen position (2+ candidates): leftmost / middle / rightmost"] == "33% / 33% / 33%"
+    assert s["... in straight frames / turn frames (driver's word)"].startswith("50% [")
+    assert s["distance at 15 m: median / 90th percentile"].endswith(" m")
+
+    ticks = summarize_ticks([three()], [{0: "all", 1: "tick 2", 2: "all"}])
+    assert ticks['hazard flags ("not safe to the end"): labelled / flagged / both'] == "1 / 1 / 0"
+    assert ticks["hazard flags: precision / recall / F1"] == "0.00 / 0.00 / 0.00"
+    assert ticks["mean tick error (ticks)"] == f"{(1 + 2) / 3:.3f}"
+
+
+def test_paired_comparison_and_speed():
+    frames = [three(), three(), three()]
+    driver = [choose_driver(f) for f in frames]
+    straightest = [one_hot(3, 1), one_hot(3, 0), one_hot(3, 0)]
+    p = paired_comparison(frames, driver, straightest)
+    assert p["only the first right"] == "2" and p["only the second right"] == "0" and p["both right / both wrong"] == "1 / 0"
+    assert p["p-value (exact McNemar)"] == "0.500"
+    speed = summarize_speed([{"asked": True, "seconds": s, "new_tokens": 40} for s in (1.0, 2.0, 3.0)] + [{"asked": False}])
+    assert speed["answers timed"] == "3" and speed["seconds per answer: mean / median / 95th percentile"].startswith("2.00 / 2.00")
 
 
 def test_direction_and_history_tests():

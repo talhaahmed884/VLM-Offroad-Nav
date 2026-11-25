@@ -15,7 +15,15 @@ Baselines (docs/approach-2-plan.md, phase 4; the VLM must beat them to show it r
   bearing, without looking at the image;
 - the driver (oracle): the candidate closest to the driven path, the best a chooser can do;
 - ticks: "always all"; action: "always continue".
+
+Error measures for the report (added 2026-11-24): 95% confidence intervals (Wilson for shares,
+normal approximation for means), distance errors (mean with interval, median, 90th percentile,
+and the mean over 5 / 10 / 15 m like the average displacement error of trajectory papers), the
+side of wrong choices, the chosen position, hazard flags from the ticks as precision / recall /
+F1, answer speed, and paired comparisons of two choosers on the same frames (exact McNemar test).
 """
+
+import math
 
 import numpy as np
 
@@ -139,6 +147,10 @@ def frame_numbers(frame: dict, weights: np.ndarray) -> dict[str, float | None] |
         return float((w[ok] * v[ok]).sum() / w[ok].sum()) if ok.any() else None
 
     metrics = [c.get("metrics") or {} for c in cands]
+    offsets = [[offset_from_driven(c["xy"], frame["driven"]["xy"], d) for d in TICKS_M] for c in cands]
+    closest = frame["closest_to_driver"]
+    wrong = [not c["matches_driver"] for c in cands]
+    any_match = not all(wrong)
     numbers = {
         "matches_driver": mean([c["matches_driver"] for c in cands]),
         "is_closest": mean([k == frame["closest_to_driver"] for k in range(len(cands))]),
@@ -151,9 +163,94 @@ def frame_numbers(frame: dict, weights: np.ndarray) -> dict[str, float | None] |
     }
     for group in TERRAIN:
         numbers[f"share_{group}"] = mean([m.get(f"share_{group}") for m in metrics])
-    for d in TICKS_M:
-        numbers[f"offset_{d:g}m"] = mean([offset_from_driven(c["xy"], frame["driven"]["xy"], d) for c in cands])
+    for i, d in enumerate(TICKS_M):
+        numbers[f"offset_{d:g}m"] = mean([o[i] for o in offsets])
+    # Mean over 5 / 10 / 15 m (only paths that reach all three distances).
+    numbers["ade_m"] = mean([None if None in o else float(np.mean(o)) for o in offsets])
+    # Position among 2+ candidates (left to right), and the side of a wrong choice relative to the
+    # driver's closest candidate (only where some candidate matches the driver).
+    n = len(cands)
+    for name, k in (("pos_left", 0), ("pos_right", n - 1)):
+        numbers[name] = mean([j == k for j in range(n)]) if n >= 2 else None
+    numbers["pos_middle"] = mean([0 < j < n - 1 for j in range(n)]) if n >= 2 else None
+    wrong_weight = float(sum(w[j] for j in range(n) if wrong[j]))
+    numbers["wrong_weight"] = wrong_weight if any_match else None
+    numbers["wrong_left"] = float(sum(w[j] for j in range(n) if wrong[j] and j < closest)) if any_match else None
+    numbers["wrong_right"] = float(sum(w[j] for j in range(n) if wrong[j] and j > closest)) if any_match else None
     return numbers
+
+
+# --- statistics ---
+
+
+Z_95 = 1.96
+
+
+def wilson_interval(successes: float, n: int, z: float = Z_95) -> tuple[float, float]:
+    """95% confidence interval of a share (Wilson score); successes may be fractional (random baseline)."""
+    if n == 0:
+        return float("nan"), float("nan")
+    p = successes / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def mean_interval(values: list[float], z: float = Z_95) -> tuple[float, float, float]:
+    """(mean, low, high): the mean with its 95% confidence interval (normal approximation)."""
+    v = np.asarray(values, dtype=float)
+    if v.size == 0:
+        return float("nan"), float("nan"), float("nan")
+    half = z * float(v.std(ddof=1)) / math.sqrt(v.size) if v.size > 1 else 0.0
+    return float(v.mean()), float(v.mean()) - half, float(v.mean()) + half
+
+
+def mcnemar_p(only_first: int, only_second: int) -> float:
+    """Two-sided exact McNemar p-value: are two choosers equally often right on the same frames?
+
+    only_first / only_second: frames where only the first / only the second chooser is right.
+    """
+    n = only_first + only_second
+    if n == 0:
+        return 1.0
+    k = min(only_first, only_second)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+def binary_scores(truth: list[bool], predicted: list[bool]) -> dict[str, float | int | None]:
+    """Precision, recall and F1 of a yes/no detector (None where undefined), with the counts."""
+    t, p = np.asarray(truth, dtype=bool), np.asarray(predicted, dtype=bool)
+    tp, fp, fn = int((t & p).sum()), int((~t & p).sum()), int((t & ~p).sum())
+    precision = tp / (tp + fp) if tp + fp else None
+    recall = tp / (tp + fn) if tp + fn else None
+    f1 = (2 * precision * recall / (precision + recall) if precision and recall else
+          (0.0 if precision is not None and recall is not None else None))
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall, "f1": f1}
+
+
+def paired_comparison(frames: list[dict], first: list[np.ndarray], second: list[np.ndarray]) -> dict[str, str]:
+    """Two one-hot choosers on the same frames: where only one is right (driver match), and the McNemar p.
+
+    Frames where either has no choice are left out. Not for the random baseline (not one-hot).
+    """
+    only_first = only_second = both = neither = 0
+    for f, a, b in zip(frames, first, second):
+        if a.sum() == 0 or b.sum() == 0:
+            continue
+        ra = f["candidates"][int(np.argmax(a))]["matches_driver"]
+        rb = f["candidates"][int(np.argmax(b))]["matches_driver"]
+        only_first += ra and not rb
+        only_second += rb and not ra
+        both += ra and rb
+        neither += not ra and not rb
+    return {
+        "frames": str(only_first + only_second + both + neither),
+        "both right / both wrong": f"{both} / {neither}",
+        "only the first right": str(only_first),
+        "only the second right": str(only_second),
+        "p-value (exact McNemar)": f"{mcnemar_p(only_first, only_second):.3f}",
+    }
 
 
 # --- summaries over frames ---
@@ -167,6 +264,31 @@ def _num(values: list[float], unit: str = "", digits: int = 2) -> str:
     return f"{np.mean(values):.{digits}f}{unit}" if values else "-"
 
 
+def _pct_ci(values: list[float]) -> str:
+    """Share with its 95% interval, e.g. '66% [61, 71]'."""
+    if not values:
+        return "-"
+    lo, hi = wilson_interval(float(np.sum(values)), len(values))
+    return f"{100 * np.mean(values):.0f}% [{100 * lo:.0f}, {100 * hi:.0f}]"
+
+
+def _num_ci(values: list[float], unit: str = " m") -> str:
+    """Mean with its 95% interval, e.g. '1.43 m [1.29, 1.58]'."""
+    if not values:
+        return "-"
+    m, lo, hi = mean_interval(values)
+    return f"{m:.2f}{unit} [{lo:.2f}, {hi:.2f}]"
+
+
+def _score(value: float | None) -> str:
+    return "-" if value is None else f"{value:.2f}"
+
+
+def _ratio(part: list[float], whole: list[float]) -> str:
+    total = float(np.sum(whole))
+    return f"{100 * float(np.sum(part)) / total:.0f}%" if total > 0 else "-"
+
+
 def summarize_choices(frames: list[dict], weights: list[np.ndarray]) -> dict[str, str]:
     """One table column (metric -> text) for a chooser over the frames (frames with candidates only)."""
     rows = [(f, frame_numbers(f, w)) for f, w in zip(frames, weights)]
@@ -177,12 +299,20 @@ def summarize_choices(frames: list[dict], weights: list[np.ndarray]) -> dict[str
 
     real = lambda f: f["real_choice"]  # noqa: E731
     turn = lambda f: f["direction"] not in (None, "straight")  # noqa: E731
+    straight = lambda f: not turn(f)  # noqa: E731
+    far = col(f"offset_{TICKS_M[-1]:g}m")
+    wrong = col("wrong_weight")
     return {
         "frames with a choice": f"{len(scored)}/{len(rows)}",
-        "choice matches the driver": _pct(col("matches_driver")),
+        "choice matches the driver [95% interval]": _pct_ci(col("matches_driver")),
         "... in frames with a real choice": _pct(col("matches_driver", real)),
-        "... in turn frames (driver's word not straight)": _pct(col("matches_driver", turn)),
+        "... in straight frames / turn frames (driver's word)":
+            f"{_pct_ci(col('matches_driver', straight))} / {_pct_ci(col('matches_driver', turn))}",
         "choice is the driver's closest candidate": _pct(col("is_closest")),
+        "wrong choices: left / right of the driver's candidate":
+            f"{_ratio(col('wrong_left'), wrong)} / {_ratio(col('wrong_right'), wrong)}",
+        "chosen position (2+ candidates): leftmost / middle / rightmost":
+            " / ".join(_pct(col(k)) for k in ("pos_left", "pos_middle", "pos_right")),
         "chosen path safe to tick 1 / to the end": f"{_pct(col('safe_tick1'))} / {_pct(col('safe_all'))}",
         "chose a puddle when a dry path existed": _pct(col("puddle", puddle_frame)),
         "water / puddle / mud on the path (share of length)":
@@ -194,6 +324,10 @@ def summarize_choices(frames: list[dict], weights: list[np.ndarray]) -> dict[str
         "ground slope (cm per m)": _num(col("slope_cm_per_m"), digits=1),
         "distance from the driven path at 5 / 10 / 15 m":
             " / ".join(_num(col(f"offset_{d:g}m"), " m") for d in TICKS_M),
+        f"distance at {TICKS_M[-1]:g} m: mean [95% interval]": _num_ci(far),
+        f"distance at {TICKS_M[-1]:g} m: median / 90th percentile":
+            f"{np.median(far):.2f} m / {np.percentile(far, 90):.2f} m" if far else "-",
+        "mean distance over 5 / 10 / 15 m (ADE) [95% interval]": _num_ci(col("ade_m")),
     }
 
 
@@ -205,12 +339,18 @@ def summarize_ticks(frames: list[dict], said: list[dict[int, str]]) -> dict[str,
     if not pairs:
         return {"ticks answered": f"0/{n_candidates}"}
     truth, answer, unsafe = (np.array(x) for x in zip(*pairs))
+    full = SAFE_ANSWERS.index("all")
+    hazard = binary_scores(list(truth < full), list(answer < full))
     out = {
         "ticks answered": f"{len(pairs)}/{n_candidates}",
         "exact / within one tick": f"{_pct(list(answer == truth))} / {_pct(list(np.abs(answer - truth) <= 1))}",
+        "mean tick error (ticks)": f"{np.mean(np.abs(answer - truth)):.3f}",
         "too optimistic / too cautious": f"{_pct(list(answer > truth))} / {_pct(list(answer < truth))}",
         "unsafe stretch called safe past it":
             f"{int((answer[unsafe] > truth[unsafe]).sum())}/{int(unsafe.sum())}" if unsafe.any() else "- (none)",
+        'hazard flags ("not safe to the end"): labelled / flagged / both':
+            f"{hazard['tp'] + hazard['fn']} / {hazard['tp'] + hazard['fp']} / {hazard['tp']}",
+        "hazard flags: precision / recall / F1": " / ".join(_score(hazard[k]) for k in ("precision", "recall", "f1")),
     }
     for k, name in enumerate(SAFE_ANSWERS):  # per answer type: how often each true label is answered exactly
         here = truth == k
@@ -225,11 +365,27 @@ def summarize_actions(frames: list[dict], actions: list[str | None]) -> dict[str
     label = [p[0] for p in pairs]
     said = [p[1] for p in pairs]
     hits = sum(lab and s for lab, s in pairs)
+    stop = binary_scores(label, said)
     return {
         "action correct": _pct([lab == s for lab, s in pairs]),
         "stop frames (label) / said stop / both": f"{sum(label)} / {sum(said)} / {hits}",
         "stop recall / precision": (f"{hits}/{sum(label)}" if sum(label) else "-") + " / " +
                                    (f"{hits}/{sum(said)}" if sum(said) else "-"),
+        "stop F1": _score(stop["f1"]),
+    }
+
+
+def summarize_speed(answers: list[dict]) -> dict[str, str]:
+    """Seconds per answer (mean / median / 95th percentile) and answer length, over asked frames."""
+    seconds = [a["seconds"] for a in answers if a and a.get("asked") and a.get("seconds") is not None]
+    tokens = [a["new_tokens"] for a in answers if a and a.get("asked") and a.get("new_tokens") is not None]
+    if not seconds:
+        return {"answers timed": "0"}
+    return {
+        "answers timed": str(len(seconds)),
+        "seconds per answer: mean / median / 95th percentile":
+            f"{np.mean(seconds):.2f} / {np.median(seconds):.2f} / {np.percentile(seconds, 95):.2f}",
+        "answer length (tokens, mean)": f"{np.mean(tokens):.0f}" if tokens else "-",
     }
 
 

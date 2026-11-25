@@ -6,11 +6,17 @@ sorted into one subfolder per collection; see outputs/selector/README.md), and w
 - path choice, per mode: baselines (random, straightest, cheapest, "toward the word" in Mode B,
   and the driver as the oracle), the driven path itself as a reference (e.g. how often the
   driver passed close to an obstacle), and each run: matches the driver (all frames, frames with
-  a real choice, turn frames), safety, puddles, terrain on the chosen path, closest hard
-  obstacle, distance from the driven path at 5 / 10 / 15 m;
-- safe-distance ticks: "always all" next to each run, with how often each true answer is given
-  and how often an unsafe stretch is called safe;
-- continue / stop: "always continue" next to each run;
+  a real choice, straight and turn frames, with 95% intervals), the side of wrong choices and
+  the chosen position, safety, puddles, terrain on the chosen path, closest hard obstacle, and
+  the distance from the driven path (at 5 / 10 / 15 m; at 15 m with interval, median and 90th
+  percentile; the mean over the three, ADE);
+- safe-distance ticks: "always all" next to each run, with how often each true answer is given,
+  the mean tick error, how often an unsafe stretch is called safe, and the ticks as hazard flags
+  ("not safe to the end": precision / recall / F1);
+- continue / stop: "always continue" next to each run (stop precision / recall / F1);
+- paired comparisons: every run against the straightest and the cheapest candidate, plus any
+  --paired pairs, frame by frame (where only one is right, exact McNemar p-value);
+- speed: seconds per answer of each run (mean / median / 95th percentile);
 - optional behaviour tests: --direction-test (two Mode B runs with forced words, e.g. "bear left"
   and "bear right": does the choice move with the word?) and --history-test (a run with its own
   history and one with --history wrong: does a made-up turn in the history pull the choice?).
@@ -23,11 +29,16 @@ Usage (from the repo root):
     python scripts/evaluate.py --split test --runs test_Qwen3-VL-4B-Instruct test_Qwen3-VL-4B-Instruct_nohist \\
         --direction-test test_Qwen3-VL-4B-Instruct_dir-bear-left test_Qwen3-VL-4B-Instruct_dir-bear-right \\
         --history-test test_Qwen3-VL-4B-Instruct test_Qwen3-VL-4B-Instruct_wronghist
+    python scripts/evaluate.py --split test --out outputs/eval/test_finetuned.md \\
+        --runs test_ft-nomatch-skip-epoch4 test_Qwen3-VL-4B-Instruct_noreason \\
+        --paired test_ft-nomatch-skip-epoch4 test_Qwen3-VL-4B-Instruct_noreason
 """
 
 import argparse
 import json
 import sys
+
+import numpy as np
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,11 +54,20 @@ from offroad.nav.evaluation import (  # noqa: E402
     driven_as_frame,
     history_test,
     one_hot,
+    paired_comparison,
     summarize_actions,
     summarize_choices,
+    summarize_speed,
     summarize_ticks,
 )
 from offroad.nav.run_files import answer_file_name, find_run_dir  # noqa: E402
+
+# Baselines every run is compared with frame by frame (the strongest simple rules).
+AUTO_PAIRED = ("straightest", "cheapest")
+LEGEND = ("[a, b] = 95% confidence interval (Wilson for shares, normal approximation for means): with "
+          "this many frames the true value is probably in that range. ADE = mean distance from the "
+          "driven path over 5 / 10 / 15 m. For the random baseline the distances are averages over "
+          "all candidates of a frame.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +78,10 @@ def parse_args() -> argparse.Namespace:
                         help="two Mode B runs made with --direction (e.g. bear left, bear right)")
     parser.add_argument("--history-test", nargs=2, metavar=("OWN", "WRONG"), default=None,
                         help="a run with its own history and the same with --history wrong")
+    parser.add_argument("--paired", nargs=2, action="append", metavar=("FIRST", "SECOND"), default=[],
+                        help="compare two choosers frame by frame (run tags or baseline names, e.g. "
+                             "'straightest'); can be given several times. Every run is compared with "
+                             f"{', '.join(AUTO_PAIRED)} anyway")
     parser.add_argument("--candidates", type=Path,
                         default=REPO_ROOT / "outputs" / "candidates" / f"{CHOSEN_VARIANT}.jsonl")
     parser.add_argument("--selector-dir", type=Path, default=REPO_ROOT / "outputs" / "selector")
@@ -102,7 +126,10 @@ def main() -> None:
     if any("metrics" not in c for f in all_frames.values() for c in f["candidates"]):
         sys.exit(f"{args.candidates} has no terrain numbers (older version); rerun scripts/build_candidates.py")
 
-    tags = list(dict.fromkeys(args.runs + list(args.direction_test or []) + list(args.history_test or [])))
+    baseline_names = {name for mode in "AB" for name in BASELINES[mode]}
+    paired_tags = [name for pair in args.paired for name in pair if name not in baseline_names]
+    tags = list(dict.fromkeys(args.runs + list(args.direction_test or []) + list(args.history_test or [])
+                              + paired_tags))
     runs = {tag: read_run(args.selector_dir, tag) for tag in tags}
     keys = sorted(k for k, f in all_frames.items() if f["candidates"])
     no_candidates = sum(1 for f in all_frames.values() if not f["candidates"])
@@ -116,7 +143,15 @@ def main() -> None:
     title = f"Evaluation: {args.split}, {len(frames)} frames with candidates"
     lines = [f"## {title}", "",
              f"Frames without any candidate (the vehicle stops without asking): {no_candidates}. "
-             "Baselines and runs are scored on the same frames.", ""]
+             "Baselines and runs are scored on the same frames.", "", LEGEND, ""]
+
+    def choices(name: str, mode: str) -> list[np.ndarray] | None:
+        """One weight vector per frame for a baseline or a run in this mode (None if it has no such mode)."""
+        if name in BASELINES[mode]:
+            return [BASELINES[mode][name](f, f["direction"]) for f in frames]
+        if name in runs and mode in runs[name]:
+            return [answer_weights(f, runs[name][mode][k]) for f, k in zip(frames, keys)]
+        return None
 
     for mode in "AB":
         columns = {name: summarize_choices(frames, [chooser(f, f["direction"]) for f in frames])
@@ -144,6 +179,26 @@ def main() -> None:
             action_columns[f"{tag} {mode}"] = summarize_actions(frames, [answers[k].get("action") for k in keys])
     lines += ["### Safe distance (ticks)", ""] + table(tick_columns) + [""]
     lines += ["### Continue / stop", ""] + table(action_columns) + [""]
+
+    pairs = [(tag, base) for tag in args.runs for base in AUTO_PAIRED] + [tuple(p) for p in args.paired]
+    for mode in "AB":
+        columns = {}
+        for first, second in dict.fromkeys(pairs):
+            a, b = choices(first, mode), choices(second, mode)
+            if a is None or b is None:
+                continue
+            if first == "random" or second == "random":
+                sys.exit("--paired needs one-hot choosers; the random baseline is an average, not one choice")
+            columns[f"{first} vs {second}"] = paired_comparison(frames, a, b)
+        if columns:
+            lines += [f"### Paired comparison, Mode {mode} (driver match on the same frames)", "",
+                      "Only the frames where the two disagree decide; a p-value below 0.05 means the "
+                      "difference is unlikely to be luck.", ""] + table(columns) + [""]
+
+    if args.runs:
+        speed = {f"{tag} {mode}": summarize_speed([answers[k] for k in keys])
+                 for tag in args.runs for mode, answers in runs[tag].items()}
+        lines += ["### Speed (as measured on the machine that ran the selector)", ""] + table(speed) + [""]
 
     if args.direction_test:
         first, second = (runs[t].get("B") for t in args.direction_test)
