@@ -5,8 +5,8 @@ import pytest
 
 from offroad.mapping.elevation import GridSpec
 from offroad.nav.candidates import Candidate, resample_and_cut
-from offroad.nav.frame_candidates import unsafe_cells
 from offroad.nav.labels import (
+    unsafe_cells,
     CandidateLabels,
     cells_along,
     first_unsafe_index,

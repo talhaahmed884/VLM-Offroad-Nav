@@ -601,7 +601,100 @@ Decisions at closing (the user accepted my recommendations, 2026-11-24):
     stretches safe), keep finds 2–3 of 6; zero-shot is too cautious (99%). Too few unsafe
     labels (6) to measure safety; no stop frames. Puddles: only 13 frames.
 
-### Phase 6 (stretch): closed loop
+### Phase 6: closed loop in MAVS (branch `approach-2-closed-loop`)
+
+**Started 2026-11-24** (the user: "we now start the phase 6"; simulator: **MAVS**, the Mississippi
+State University Autonomous Vehicle Simulator, already built on the user's PC at
+`C:\Users\talha\source\repos\MAVS`, Python API `src/mavs_python/mavs_interface.py`, ctypes over
+`install/bin/mavs.dll`). The partner's PDF is a LiDAR-to-camera projection check (the same as our
+`project_lidar.py`); the shared video is a MAVS recording.
+
+**What I checked (2026-11-24):** `mavs_interface` imports in our conda env (Python 3.13), and a
+camera, an Ouster `OS1` LiDAR and the `MavsVehicleController` can be created, so the simulator,
+the candidate pipeline and the VLM run in **one Python process on the laptop**. MAVS gives
+everything the loop needs:
+- **Scenes:** `MavsRandomScene` generates a terrain with a trail (`path_type` 'Loop', 'Ridges' or
+  'Valleys'; trail width, ruts, potholes, roughness, plant density, ecosystem files such as
+  `american_southeast_forest_obstacles.json`) and saves the trail as waypoints; fixed scenes
+  exist too (`odoa_scene.json`: obstacle avoidance, `cavs_proving_ground*.json`).
+- **Vehicle:** `MavsRp3d` with `clearpath_warthog_cpu_tires.json`, **the Warthog RELLIS was
+  recorded with**; `Update(env, throttle, steering, braking, dt)`, `GetPosition`,
+  `GetOrientation`, `GetVelocity`.
+- **Sensors:** `MavsCamera` (`Initialize(nx, ny, detector w, h, focal length)`, `SetOffset`,
+  `SetPose`, `Update`, `GetNumpyArray`); `MavsLidar('OS1')`, the RELLIS LiDAR model
+  (`GetUnRegisteredPointsXYZIL`: points in the sensor frame **with labels**).
+- **Control:** `MavsVehicleController` (pure pursuit: `SetDesiredPath`, `SetCurrentState`,
+  `SetDesiredSpeed`, `GetDrivingCommand`), so a chosen candidate can be driven directly.
+
+**The loop (one decision every 0.5 s of simulated time, as the 2 Hz decision frames):**
+1. Camera image + LiDAR scan from MAVS at the vehicle's pose.
+2. LiDAR → FLU → elevation map → relaxed cost map → candidates (phase 2 code, unchanged).
+3. Picture with the candidates (phase 3 code) → the chooser answers (choice, ticks, continue/stop).
+4. The chosen candidate (vehicle frame → world) goes to the pure-pursuit controller, which drives
+   for 0.5 s of simulated time; then back to 1. The simulator waits while the VLM thinks
+   (simulated time, not wall-clock), so a slow answer doesn't crash the vehicle.
+5. Logged per decision: pose, candidates, choice, answer, the picture (every n-th), and the
+   simulator's ground truth for scoring only (labels, the trail waypoints, contact).
+
+**Choosers compared (same scenes, same seeds):** straightest, cheapest (the LiDAR planner on its
+own), zero-shot 4B (asked without reasoning), **fine-tuned 4B skip epoch 4**; optionally random.
+
+**Metrics (scored from the simulator's ground truth, never shown to the chooser):** route
+completion (distance along the trail before the run ends), interventions (stuck: no progress for
+N s; off the trail by more than X m; contact with an obstacle), distance from the trail
+centre, time, stops (right when no candidate is safe, e.g. a blocked trail; wrong otherwise),
+and the safety rows of phase 4 where MAVS labels allow. Mode B: the word comes from the trail
+waypoints ~50 m ahead, as on RELLIS; a fork scene tests whether the word is followed.
+
+**Steps (each a small, checked piece):**
+- **6.1 Sensors and calibration:** a MAVS rig like RELLIS's (Warthog, OS1 LiDAR, camera with
+  RELLIS's field of view), one frame saved, LiDAR projected on the camera image (the partner's
+  check), and the FLU and camera transforms verified.
+- **6.2 Candidates on MAVS data:** cost map and candidates on simulated scans; the picture the
+  VLM would see; also the general-ability check moved here from phase 5.
+- **6.3 The loop:** controller, stepping, logging, a chooser interface, one scene with
+  "straightest" end to end.
+- **6.4 Scenes:** a small fixed set (e.g. 3–5 trails with obstacles / a fork / a blocked end).
+- **6.5 Runs and evaluation:** all choosers on all scenes, both modes; a report like phase 4.
+
+**Branch cleanup (user's request 2026-11-24):** this branch keeps only what the closed loop needs;
+the RELLIS pipeline, its results and the training code stay on `approach-2-mapless-vln`.
+
+**User decisions (2026-11-24):** remove the RELLIS pipeline and the training code from this
+branch; sensors like RELLIS's; generated trail scenes; about **one week** for phase 6, so steps
+6.1-6.3 plus a small run set. **Vehicle: MRZR4** (changed from the Warthog after my tests, see
+below), with the RELLIS-like sensors.
+
+**Step 6.1 status (2026-11-24): written and checked in my scratchpad; the user has not run it.**
+- Findings in MAVS (all checked with small scripts):
+  - **Missing meshes:** most vegetation folders (`USA_Conifers`, `Europe`, `Groundcover`, ...)
+    are not in the user's MAVS data; only `forest_simple.json` has all its plants. One missing
+    mesh gives the scene an invalid bounding box, `GetSurfaceHeight` then returns -FLT_MAX and the
+    vehicle physics fails (NaN, access violation). Generated scenes are cleaned
+    (`drop_missing_meshes`).
+  - **The brake drives backwards** from standstill (Warthog and MRZR4): the vehicle settles with
+    no pedals; the controller brakes only while moving forward.
+  - **Throttle works like an accelerator held down** (0.1 reaches 3.1 m/s after 4 s and keeps
+    rising; 0.25 and 0.4 both reach ~5 m/s): speed needs feedback.
+  - **The Warthog model is unusable for driving:** its reported heading is ~15 degrees off the
+    direction it moves, even on bare ground, and its skid steering is very sensitive at walking
+    pace (command 0.1 = 2.3 m turning radius). **The MRZR4** moves where it points (within 2
+    degrees), curvature = 0.105 1/m x command (linear to full lock), and with our pure-pursuit
+    follower stays on average 0.07-0.32 m (at most 0.46 m) from a straight path and arcs of
+    25 / 12 / 10 m radius at 1.3-1.5 m/s. **User decision: MRZR4 with the RELLIS sensors.**
+  - **Plants make the vehicle physics 30x slower** (7.5 vs 0.26 s per simulated second): the
+    vehicle drives in a copy of the scene without objects (`<name>_ground.json`); the sensors
+    see the full scene. In MAVS plants only add rolling resistance (they are not solid), so
+    little is lost; collisions will be judged from geometry, not from the physics.
+- Rig: MRZR4 (CG 0.71 m above the ground), OS1 LiDAR 1.2 m above the ground (measured 1.11 m
+  from its own scan on a 150 m trail scene), camera 0.1 m ahead of / 0.17 m below the LiDAR,
+  level, 960 x 600 with RELLIS's field of view. **Calibration check:** our projection of the
+  scan lands a median 0.73 px from the pixels MAVS marks for the same points (5 px shifts give
+  3.7-5.4 px). One scan ~48,500 points; loading, placing and capturing take ~4 s.
+- Code: `sim/rig.py`, `sim/mavs_world.py`, `sim/control.py`, `scripts/sim_check_rig.py`
+  (`run_all.py` step `sim_rig`); tests `test_sim_rig.py`, `test_sim_control.py`.
+
+### Phase 6 notes kept from the plan
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)
   would allow real closed-loop driving. Revisit only if the offline results call for it.
 - **What it needs:** an RGB camera (the VLM's input) and a LiDAR or other depth sensor mounted

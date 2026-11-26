@@ -2,6 +2,7 @@
 /data/
 /outputs/sft/
 /outputs/adapters/
+/outputs/sim/
 
 # Python
 __pycache__/

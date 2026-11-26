@@ -134,3 +134,14 @@ def should_stop(labels: list[CandidateLabels]) -> bool:
 def has_real_choice(labels: list[CandidateLabels]) -> bool:
     """True if at least two candidates are safe to at least the first tick."""
     return sum(lab.safe_until != "none" for lab in labels) >= 2
+
+
+def unsafe_cells(classes: np.ndarray, cells: list[tuple[int, int]], standing: np.ndarray,
+                 water_ids: list[int], hard_ids: list[int]) -> np.ndarray:
+    """(C,) True for cells that are water, or a hard obstacle where something stands up.
+
+    classes: (C,) ground-truth class per cell; standing: (nx, ny) bool, something taller than
+    max_step in or next to the cell.
+    """
+    is_standing = np.array([standing[c] for c in cells], dtype=bool)
+    return np.isin(classes, water_ids) | (np.isin(classes, hard_ids) & is_standing)

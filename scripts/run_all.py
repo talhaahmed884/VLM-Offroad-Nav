@@ -5,10 +5,10 @@ output is shown live. A failed step doesn't stop the others; the summary marks i
 and the exit code is non-zero.
 
 Usage (from the repo root):
-    python scripts/run_all.py                   # tests + every script on one sample frame (quick)
-    python scripts/run_all.py --full            # also the slow steps (e.g. the GPU check)
+    python scripts/run_all.py                   # the quick steps (unit tests)
+    python scripts/run_all.py --full            # also the slow steps (GPU check, MAVS)
     python scripts/run_all.py --tests-only      # just the unit tests
-    python scripts/run_all.py --only costmap path    # just the named steps
+    python scripts/run_all.py --only sim_rig    # just the named steps
     python scripts/run_all.py --list            # show the steps and their commands
 """
 
@@ -32,41 +32,13 @@ class Step:
 
 # In pipeline order. Add new scripts here as the project grows.
 STEPS = [
-    Step("tests", "unit tests (no dataset needed)", ("-m", "pytest", "-q")),
-    # Shared building blocks (kept from approach 1).
-    Step("projection", "LiDAR overlay on frame 00000/0",
-         ("scripts/project_lidar.py", "--sequence", "0", "--frame", "0")),
-    Step("elevation", "elevation map for 00000/0",
-         ("scripts/build_elevation_map.py", "--sequence", "0", "--frame", "0")),
-    Step("costmap", "cost map for 00000/0",
-         ("scripts/build_cost_map.py", "--sequence", "0", "--frame", "0")),
-    Step("path", "geometric A* path for 00000/0",
-         ("scripts/plan_path.py", "--sequence", "0", "--frame", "0")),
+    Step("tests", "unit tests (no dataset, GPU or MAVS needed)", ("-m", "pytest", "-q")),
     # Needs requirements-vlm.txt and a GPU, so it only runs with --full or --only.
-    Step("gpu", "check PyTorch, the GPU, and the VLM / fine-tuning libraries",
+    Step("gpu", "check PyTorch, the GPU, and the VLM libraries",
          ("scripts/check_gpu.py",), slow=True),
-    # Approach 2 (see docs/approach-2-plan.md).
-    Step("frames", "phase 1: choose the decision frames -> configs/decision_frames.csv",
-         ("scripts/build_decision_frames.py",)),
-    Step("driven", "phase 1: driven path from the poses for 00000/600",
-         ("scripts/show_driven_path.py", "--sequence", "0", "--frame", "600")),
-    Step("candidates", "phase 2: candidates + labels for every decision frame, strict vs relaxed (~2 min)",
-         ("scripts/build_candidates.py",)),
-    Step("show", "phase 2: candidates of 00000/601 on the camera image and the cost grids",
-         ("scripts/show_candidates.py", "--sequence", "0", "--frame", "601")),
-    Step("prompt", "phase 3: the VLM's picture and Mode B prompt for 00000/601",
-         ("scripts/show_prompt.py", "--sequence", "0", "--frame", "601", "--mode", "B")),
-    # Needs the VLM on the GPU (~1-2 min with loading), so it only runs with --full or --only.
-    Step("selector", "phase 3: zero-shot Qwen3-VL-4B on 3 validation frames, both modes",
-         ("scripts/run_selector.py", "--limit", "3", "--tag", "smoke", "--fresh"), slow=True),
-    Step("eval", "phase 4: baselines on the test frames (random, straightest, cheapest, the driver)",
-         ("scripts/evaluate.py", "--split", "test")),
-    Step("sft", "phase 5: a tiny fine-tuning dataset (6 frames per split, 1 epoch) -> outputs/sft/smoke",
-         ("scripts/build_sft_data.py", "--no-match", "keep", "--limit-frames", "6", "--epochs", "1", "--name", "smoke")),
-    # Needs the GPU (~1-2 min with loading), so it only runs with --full or --only.
-    Step("train", "phase 5: 2 QLoRA training steps on the tiny dataset -> outputs/adapters/smoke",
-         ("scripts/train_selector.py", "--data", "outputs/sft/smoke", "--max-steps", "2", "--grad-accum", "2",
-          "--eval-limit", "2", "--workers", "0"), slow=True),
+    # Phase 6 (closed loop in MAVS, see docs/approach-2-plan.md). Needs MAVS, so --full or --only.
+    Step("sim_rig", "6.1: trail scene + Warthog with a RELLIS-like rig, one frame -> outputs/sim/rig_check",
+         ("scripts/sim_check_rig.py",), slow=True),
 ]
 
 
