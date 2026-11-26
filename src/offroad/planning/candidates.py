@@ -26,7 +26,7 @@ class CandidateParams:
     # Lateral offsets in FLU y (meters): 0 = center, >0 = left, <0 = right.
     lateral_offsets_m: tuple[float, ...] = (0.0, 2.5, -2.5, 5.0, -5.0)
     lateral_bias_weight: float = 0.25  # cost multiplier slope per meter from offset
-    goal_y_scale: float = 0.5  # fraction of lateral_offset applied to the target y
+    goal_y_scale: float = 0.0  # fraction of lateral_offset applied to the target y
     min_separation_m: float = 0.75  # drop candidates closer than this to a kept path
     max_candidates: int = 4
     # Soft-obstacle candidate settings (tall grass / penetrable bush option).
