@@ -19,7 +19,10 @@ from offroad.viz.topdown import draw_camera_fov, label_colors, show_top_down
 INK, INK_SECONDARY, INK_MUTED = "#0b0b0b", "#52514e", "#898781"
 GRID, SURFACE = "#e1e0d9", "#fcfcfb"
 BASELINE_GRAY = "#898781"
-SERIES = {"8B": "#2a78d6", "oracle": "#eb6834", "4B": "#1baf7a"}  # palette slots 1, 2, 3
+SERIES = {
+    "DriveVLN": "#8e44ad", "8B": "#2a78d6",
+    "oracle": "#eb6834", "4B": "#1baf7a"
+}  # palette slots 1, 2, 3
 WIN, LOSS = "#2a78d6", "#e34948"  # the palette's diverging poles (blue = better, red = worse)
 
 
