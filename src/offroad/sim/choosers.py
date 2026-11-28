@@ -130,3 +130,36 @@ class VlmChooser(Chooser):
                   "chosen_bearing_deg": chosen_bearing(answer, sel.colors, bearings),
                   "seconds": round(reply.seconds, 2)}
         return Decision(index, record, sel.picture)
+
+
+class ReplayMismatch(RuntimeError):
+    """A replayed run saw different candidates than the saved run: it isn't the same drive."""
+
+
+class ReplayChooser(Chooser):
+    """Repeats a saved run's choices, decision by decision (for videos: no VLM needed).
+
+    decisions: the run's decisions.jsonl records (sim/loop.py). The loop and MAVS are
+    deterministic, so a replay sees the same candidates at every decision; this is checked (end
+    bearings to 0.1 degree), and a difference raises ReplayMismatch. The picture is drawn as the
+    VLM was shown it (it doesn't depend on mode, word or history). The record returned is the
+    logged answer (none for a baseline) plus the candidates' colors.
+    """
+
+    def __init__(self, decisions: list[dict], name: str, calib: CameraCalibration, spec: GridSpec = GridSpec()):
+        self.decisions, self.name, self.calib, self.spec = decisions, name, calib, spec
+
+    def decide(self, image, plan, ctx):
+        if ctx.number >= len(self.decisions):
+            raise ReplayMismatch(f"the replay reached decision {ctx.number}; the saved run had {len(self.decisions)}")
+        logged = self.decisions[ctx.number]
+        bearings = [round(c.end_bearing_deg, 1) for c in plan.candidates]
+        if bearings != logged["end_bearings_deg"]:
+            raise ReplayMismatch(f"decision {ctx.number}: candidates end at {bearings} deg, "
+                                 f"the saved run had {logged['end_bearings_deg']}")
+        sel = prepare_selector_input(image, self.calib, plan.candidates, plan.costmap.ground_z, self.spec,
+                                     ctx.scene, ctx.number, ctx.mode, ctx.word, reasoning=False)
+        answer = logged.get("answer", {})
+        if answer.get("colors") not in (None, sel.colors):
+            raise ReplayMismatch(f"decision {ctx.number}: colors {sel.colors}, the saved run had {answer['colors']}")
+        return Decision(logged["chosen"], {**answer, "colors": sel.colors}, sel.picture)

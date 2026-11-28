@@ -894,6 +894,33 @@ The baselines match my self-check exactly (the loop is reproducible).
 - One run per combination (the simulator is deterministic), so pass counts are single
   observations; the decision-level shares rest on 700-900 decisions per chooser and mode.
 
+**Videos (2026-11-28, the user: "Video recordings"; written and checked in my scratchpad, not run
+by the user yet).** `scripts/sim_record.py` (`run_all.py` step `sim_videos`) → `outputs/sim/videos/<run>.mp4`.
+- A saved run is driven again with `choosers.ReplayChooser` (its logged choices). The loop and MAVS
+  are deterministic, so the replay drives the same path: checked at every decision (the same
+  candidate end bearings and colors, else `ReplayMismatch`) and at the end (outcome, decisions,
+  progress). No VLM needed: a replay takes ~3-5 min per 30 s of driving.
+- `sim/video.py` (pure): chase camera 10 m behind, 6 m above, 22 degrees down, 60 degree view,
+  heading following the vehicle's with a lag; the chosen path projected onto the chase view
+  from 4 m ahead (the overlay has no depth); the frame = chase view | the chooser's picture
+  (exactly the VLM's input) + a caption (time, decision, candidates, progress, offset, word,
+  answer with safe-until ticks, answer time); a title card; the outcome held at the end. `Recorder`
+  wraps the world and writes a frame every 0.1 s of simulated time (10 fps = real time).
+- `MavsWorld.show_vehicle` / `chase_view`: the MRZR4's body and four wheels (meshes and wheel
+  positions from its vehicle file) as MAVS actors, kept 500 m under the ground except during
+  the chase render, so the sensors capture exactly what they captured without them (checked:
+  identical image and LiDAR). Wheels roll with the distance driven.
+- Found: MAVS's RGB camera has **auto-exposure** (after its first 5 frames it scales every image
+  to the same mean brightness, over the last second; rgb_camera.cpp `ApplyElectronics`).
+  Chase views without sky came out washed out, so the chase camera is made anew every 5
+  frames (fixed exposure). The VLM's camera has the same auto-exposure in every run
+  (deterministic, as real cameras auto-expose); nothing changes for the results.
+- MP4 with MPEG-4 part 2 ("mp4v": VLC, Windows' Media Player); the pip OpenCV has no H.264
+  encoder. ~1.5-1.8 MB per second of video (the rendered foliage is noisy).
+- Self-check: `blocked_finetuned_modeA` and `fork-right_finetuned_modeB` replayed identically
+  to the saved runs. Highlights (`HIGHLIGHTS`): both VLMs on fork-right Mode B, both on the
+  curves Mode A, fine-tuned on the half-wall and on the blocked trail.
+
 ### Phase 6 notes kept from the plan
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)
   would allow real closed-loop driving. Revisit only if the offline results call for it.

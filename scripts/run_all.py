@@ -56,6 +56,8 @@ STEPS = [
          "-> outputs/sim/runs", ("scripts/sim_run_all.py",), slow=True),
     Step("sim_eval", "6.5: tables of the closed-loop runs -> outputs/sim/evaluation.md",
          ("scripts/sim_evaluate.py",), slow=True),
+    Step("sim_videos", "6.5: videos of the highlight runs (replayed, chase view + the VLM's picture; ~45 min, "
+         "no GPU) -> outputs/sim/videos", ("scripts/sim_record.py",), slow=True),
 ]
 
 

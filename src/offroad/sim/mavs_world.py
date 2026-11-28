@@ -306,6 +306,84 @@ class MavsWorld:
         self.lidar.SetOffset(offsets["lidar"], IDENTITY_Q)
         self.camera.SetOffset(offsets["camera"], IDENTITY_Q)
 
+    def show_vehicle(self, params=None) -> None:
+        """Add the vehicle's body and four wheels to the rendered scene as actors, and a chase camera.
+
+        For videos only (sim/video.py). The vehicle normally lives in ground_env (its physics),
+        so the sensors never see it, as on RELLIS. The actors are kept 500 m under the ground
+        except while chase_view renders, so capture() sees exactly what it sees without them
+        (checked 2026-11-28: identical image and LiDAR points). params: video.ChaseParams.
+        """
+        import tempfile
+
+        from offroad.sim.video import ChaseParams, chase_K
+
+        params = params or ChaseParams()
+        vehicle = json.loads((mavs_data_path() / "vehicles" / "rp3d_vehicles" / self.rig.vehicle_file)
+                             .read_text(encoding="utf-8"))
+        folder = Path(tempfile.mkdtemp(prefix="mavs_actors_"))
+
+        def add(mesh: dict, name: str) -> int:
+            actor = {"Actors": [{"Mesh": mesh["File"], "Rotate Y to Z": mesh.get("Rotate Y to Z", False),
+                                 "Rotate X to Y": mesh.get("Rotate X to Y", False),
+                                 "Rotate Y to X": mesh.get("Rotate Y to X", False), "Locked to Ground": False,
+                                 "Instances": [{"Initial Position": [0.0, 0.0, -500.0], "Offset": [0.0, 0.0, 0.0],
+                                                "Scale": mesh.get("Scale", [1.0, 1.0, 1.0]), "Speed": 0.0}]}]}
+            path = folder / f"{name}.json"
+            path.write_text(json.dumps(actor), encoding="utf-8")
+            return self.env.AddActor(str(path), False)
+
+        self.body_actor = add(vehicle["Mesh"], "body")
+        # Wheel centres from the CG: each axle's offset, half its track to each side, tyre radius up from the ground.
+        self.wheels = [(add(vehicle["Tire Mesh"], f"wheel{2 * k + s}"), axle["Longitudinal Offset"],
+                        side * axle["Track Width"] / 2, axle["Tire"]["Radius"])
+                       for k, axle in enumerate(vehicle["Axles"]) for s, side in enumerate((1.0, -1.0))]
+        w, h = params.size
+        self.chase_args = (w, h, w * self.rig.pixel_pitch_m, h * self.rig.pixel_pitch_m,
+                           chase_K(params)[0, 0] * self.rig.pixel_pitch_m)
+        self.chase_camera, self.chase_renders = None, 0
+        self.wheel_turn, self.last_xy = 0.0, None
+
+    # MAVS's RGB camera exposes its first frames with a fixed factor, then scales every image to
+    # the same mean brightness (auto-exposure over the last second, rgb_camera.cpp
+    # ApplyElectronics), which washed out chase views without sky. A fresh chase camera every
+    # few frames keeps the fixed exposure: shade looks like shade, sun like sun (2026-11-28).
+    # The sensor camera (the VLM's input) is left as it is in every run.
+    CHASE_FIXED_EXPOSURE_FRAMES = 5
+
+    def _chase_camera(self):
+        if self.chase_camera is None or self.chase_renders % self.CHASE_FIXED_EXPOSURE_FRAMES == 0:
+            self.chase_camera = self.mavs.MavsCamera()
+            self.chase_camera.Initialize(*self.chase_args)
+            self.chase_camera.SetGammaAndGain(0.6, 1.0)
+            self.chase_camera.RenderShadows(True)
+            self.chase_camera.SetEnvironmentProperties(self.env.obj)
+        self.chase_renders += 1
+        return self.chase_camera
+
+    def chase_view(self, camera_position: list[float], camera_quat: list[float]) -> np.ndarray:
+        """(H, W, 3) RGB render of the full scene with the vehicle in it, from a camera pose (world)."""
+        from offroad.sim.video import quat_about_y, quat_matrix, quat_mul
+
+        position, q = self.pose()
+        if self.last_xy is not None:  # wheels roll with the distance driven
+            self.wheel_turn += float(np.hypot(*(position[:2] - self.last_xy))) / self.wheels[0][3]
+        self.last_xy = position[:2].copy()
+        self.env.SetActorPosition(self.body_actor, list(position), q)
+        R = quat_matrix(q)
+        wheel_q = quat_mul(q, quat_about_y(self.wheel_turn))
+        for actor, forward, left, radius in self.wheels:
+            centre = position + R @ np.array([forward, left, radius - self.cg_height_m])
+            self.env.SetActorPosition(actor, list(centre), wheel_q)
+        camera = self._chase_camera()
+        camera.SetPose(list(camera_position), list(camera_quat))
+        camera.Update(self.env, 0.1)
+        image = np.ascontiguousarray(camera.GetNumpyArray(), dtype=np.uint8).copy()
+        hidden = [float(position[0]), float(position[1]), float(position[2]) - 500.0]
+        for actor in [self.body_actor, *(w[0] for w in self.wheels)]:
+            self.env.SetActorPosition(actor, hidden, q)
+        return image
+
     def step(self, throttle: float, steering: float, braking: float, dt: float) -> None:
         self.vehicle.Update(self.ground_env, throttle, steering, braking, dt)
         self.env.AdvanceTime(dt)

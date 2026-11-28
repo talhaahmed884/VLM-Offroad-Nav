@@ -65,6 +65,7 @@ python scripts/run_all.py --full      # also the GPU check and the MAVS steps
 | 6.3 | `scripts/sim_drive.py --chooser straightest\|cheapest\|zeroshot\|finetuned --mode A\|B` | one closed-loop run: a decision every 0.5 s of simulated time, the chosen path driven by the path follower, until the trail's end, a stop, leaving the trail, getting stuck, or the time limit; saves every decision, a summary and a trajectory plot |
 | 6.4 | `scripts/sim_build_scenes.py` | builds the test scenes from one generated forest: S-curves, a fork (routes `left` / `right`), a trail blocked by a wall, a trail half-blocked by a wall; checks each (routes, candidates at the start, wall height and which candidates get past it) and saves views from above |
 | 6.5 | `scripts/sim_run_all.py`, `scripts/sim_evaluate.py` | every chooser (straightest, cheapest, the oracle reference, zero-shot and fine-tuned Qwen3-VL-4B) on every scene and route, in Modes A and B (resumable), then the tables in `outputs/sim/evaluation.md`: tests passed, collisions, leaving the trail, wrong stops, completion, distance from the route, who stopped at the wall, what the choosers did |
+| videos | `scripts/sim_record.py [run names] [--all] [--speed 2]` | MP4s of saved runs in `outputs/sim/videos`: each run is driven again in MAVS with its logged choices (deterministic, checked at every decision; no VLM needed), filmed by a chase camera with the MRZR4's body and wheels, the chosen path drawn on the ground, the picture the chooser saw beside it, and the time, word and answer below. Default: six highlight runs (~45 min) |
 
 ## Layout
 
@@ -76,7 +77,8 @@ src/offroad/
   planning/      A* and the shortest-path tree
   nav/           candidates, labels, the selector's picture and prompts, answer checking
   vlm/           Qwen3-VL backend (4-bit, optional LoRA adapter)
-  sim/           phase 6: rig (sensor setup), mavs_world (MAVS wrapper), control (path follower)
+  sim/           phase 6: rig (sensor setup), mavs_world (MAVS wrapper), control (path follower), planning,
+                 choosers, loop, metrics, scenes, runs, evaluation, video (run videos)
   viz/           image overlays, top-down maps
 scripts/         run_all.py, check_gpu.py, sim_*.py
 tests/           unit tests (no dataset, GPU or MAVS needed)
