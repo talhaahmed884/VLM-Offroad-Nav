@@ -2,7 +2,10 @@
 /data/
 /outputs/sft/
 /outputs/adapters/
-/outputs/sim/
+/outputs/sim/candidates/
+/outputs/sim/rig_check/
+/outputs/sim/runs/
+/outputs/sim/scenes/
 
 # Python
 __pycache__/
