@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 
 from offroad.sim.rig import RigSpec, mavs_camera_args, sensor_offsets, to_lidar_axes, yaw_from_quaternion
+from offroad.sim.scenes import (BLOCKADE_HEIGHT_SCALE, BLOCKADE_MESH, BLOCKADE_THICKNESS_M, Blockade, SceneDesign,
+                                near_any, vprp_text)
 
 IDENTITY_Q = [1.0, 0.0, 0.0, 0.0]
 
@@ -128,6 +130,77 @@ def ground_only_scene(scene_json: Path) -> Path:
     return out
 
 
+# Solid things in a scene, for the collision check (MAVS's vehicle drives through them, because
+# the physics runs on the bare ground): tree trunks by mesh (approximate trunk radii, m) and the
+# step 6.4 blockades (sampled along their length, radius = half their thickness).
+TRUNK_RADIUS_M = {"vegetation/oak/": 0.4, "vegetation/pine_tree/": 0.3, "vegetation/honey_locust/": 0.3,
+                  "vegetation/weeping_cherry/": 0.3}
+
+
+def scene_obstacles(scene_json: Path) -> tuple[np.ndarray, np.ndarray]:
+    """(points (N, 2) world xy, radii (N,)) of the trunks and blockades in a scene file."""
+    data = json.loads(Path(scene_json).read_text(encoding="utf-8"))
+    points, radii = [], []
+    for obj in data.get("Objects", []):
+        mesh = obj["Mesh"].replace("\\", "/")
+        radius = next((r for key, r in TRUNK_RADIUS_M.items() if key in mesh), None)
+        if radius is not None:
+            for inst in obj["Instances"]:
+                points.append(inst["Position"][:2])
+                radii.append(radius * float(inst.get("Scale", [1.0])[0]))
+        elif mesh == BLOCKADE_MESH:
+            for inst in obj["Instances"]:
+                b = Blockade(inst["Position"][0], inst["Position"][1], inst["YawPitchRoll"][0])
+                for p in b.footprint_points():
+                    points.append(p)
+                    radii.append(BLOCKADE_THICKNESS_M / 2)
+    return np.array(points, dtype=float).reshape(-1, 2), np.array(radii, dtype=float)
+
+
+def build_designed_scene(design: SceneDesign, base_scene_json: Path, out_dir: Path,
+                         trail_width_m: float = 4.0) -> Path:
+    """Draw a step 6.4 design into a copy of a generated forest; returns <name>_scene.json.
+
+    The trails become the scene's dirt texture (one MAVS path file each), plants are removed
+    within 2.5 m of the trail centre (trees within 3.5 m, so no trunk stands on the trail edge),
+    and the blockades are added as 1.8 m walls. Also written: <name>_design.json (routes and
+    blockades: the answer key) and <name>_path.vprp (the first route).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data = json.loads(Path(base_scene_json).read_text(encoding="utf-8"))
+    paths = []
+    for trail_name, points in design.trails.items():
+        path = out_dir / f"{design.name}_trail_{trail_name}.vprp"
+        path.write_text(vprp_text(points), encoding="utf-8")
+        paths.append(str(path))
+    data["Layered Surface"]["Trail"]["Path"] = paths
+    data["Layered Surface"]["Trail"]["Trail Width"] = trail_width_m
+    lines = list(design.trails.values())
+    for obj in data.get("Objects", []):
+        is_tree = any(key in obj["Mesh"].replace("\\", "/") for key in TRUNK_RADIUS_M)
+        positions = np.array([inst["Position"][:2] for inst in obj["Instances"]]).reshape(-1, 2)
+        if len(positions):
+            near = near_any(positions, lines, 3.5 if is_tree else 2.5)
+            obj["Instances"] = [inst for inst, n in zip(obj["Instances"], near) if not n]
+    if design.blockades:
+        data.setdefault("Objects", []).append({
+            "Mesh": BLOCKADE_MESH, "Rotate Y to Z": True,
+            "Instances": [{"YawPitchRoll": [b.yaw, 0.0, 0.0], "Position": [b.x, b.y, 0.0],
+                           # MAVS scales after turning the mesh's y (up) to z: height is the 3rd value
+                           "Scale": [1.0, 1.0, BLOCKADE_HEIGHT_SCALE]} for b in design.blockades]})
+    scene = out_dir / f"{design.name}_scene.json"
+    scene.write_text(json.dumps(data), encoding="utf-8")
+    (out_dir / f"{design.name}_path.vprp").write_text(vprp_text(design.routes[design.default_route]), encoding="utf-8")
+    (out_dir / f"{design.name}_design.json").write_text(json.dumps({
+        "name": design.name, "note": design.note, "default_route": design.default_route,
+        "routes": {k: np.round(v, 3).tolist() for k, v in design.routes.items()},
+        "blockades": [{"x": b.x, "y": b.y, "yaw": b.yaw} for b in design.blockades]}, indent=1), encoding="utf-8")
+    ground = Path(str(scene).replace("_scene.json", "_ground.json"))
+    if ground.exists():  # rebuilt from the new scene on the next load
+        ground.unlink()
+    return scene
+
+
 @dataclass
 class Capture:
     """One sensor frame.
@@ -146,9 +219,11 @@ class Capture:
 
 
 class MavsWorld:
-    """A loaded scene with the Warthog, its camera and LiDAR (RigSpec), and the trail waypoints."""
+    """A loaded scene with the vehicle, its camera and LiDAR (RigSpec), the trail (answer key) and
+    the solid obstacles for the collision check (`obstacles`: points (N, 2) and radii (N,))."""
 
-    def __init__(self, scene_json: Path, rig: RigSpec = RigSpec(), labeling: bool = True, hour: int = 12):
+    def __init__(self, scene_json: Path, rig: RigSpec = RigSpec(), labeling: bool = True, hour: int = 12,
+                 date: tuple[int, int, int] = (2026, 6, 21), cloud_cover: float = 0.0, route: str | None = None):
         mavs = import_mavs()
         self.mavs, self.rig = mavs, rig
         # The sensors see the full scene (self.env); the vehicle drives on the bare ground
@@ -162,16 +237,20 @@ class MavsWorld:
         self.labeling = labeling
         self.env = mavs.MavsEnvironment()
         self.env.SetScene(self.scene.scene)
-        self.env.SetTime(hour)
+        # A fixed date, time (to the second) and no clouds make every run render the same pixels
+        # (checked 2026-11-26). With MAVS's defaults the sun follows the computer's clock and the
+        # clouds are random: two runs seconds apart differed by 5.8 grey levels on average, and
+        # 3 of 24 VLM answers changed.
+        self.env.SetDate(*date)
+        self.env.SetTimeSeconds(hour, 0, 0)
         self.env.SetTurbidity(3.0)
-        self.env.SetCloudCover(0.3)
+        self.env.SetCloudCover(cloud_cover)
         self.ground_scene = mavs.MavsEmbreeScene()
         self.ground_scene.Load(str(ground_only_scene(scene_json)))
         self.ground_env = mavs.MavsEnvironment()
         self.ground_env.SetScene(self.ground_scene.scene)
 
-        self.vehicle = mavs.MavsRp3d()
-        self.vehicle.Load(str(mavs_data_path() / "vehicles" / "rp3d_vehicles" / rig.vehicle_file))
+        self.vehicle = None  # made by place()
 
         self.camera = mavs.MavsCamera()
         self.camera.Initialize(*mavs_camera_args(rig))
@@ -180,12 +259,23 @@ class MavsWorld:
         self.camera.SetEnvironmentProperties(self.env.obj)
         self.lidar = mavs.MavsLidar(rig.lidar_model)
 
+        # The trail that scores the run (the answer key): a designed scene's route (step 6.4), else
+        # the trail MAVS generated.
+        design = Path(str(scene_json).replace("_scene.json", "_design.json"))
         vprp = Path(str(scene_json).replace("_scene.json", "_path.vprp"))
         self.trail = np.zeros((0, 2))
-        if vprp.exists():
+        self.route = None
+        if design.exists():
+            routes = json.loads(design.read_text(encoding="utf-8"))["routes"]
+            self.route = route or next(iter(routes))
+            if self.route not in routes:
+                raise ValueError(f"{design.name} has routes {sorted(routes)}, not {self.route!r}")
+            self.trail = np.array(routes[self.route], dtype=float)
+        elif vprp.exists():
             wp = mavs.MavsWaypoints()
             wp.Load(str(vprp))
             self.trail = np.array([p[:2] for p in wp.waypoints], dtype=float)
+        self.obstacles = scene_obstacles(scene_json)
         self.cg_height_m = None
 
     def ground_height(self, x: float, y: float) -> float:
@@ -195,8 +285,12 @@ class MavsWorld:
         """Put the vehicle at (x, y) facing yaw, let it settle with no pedals, then mount the sensors.
 
         The sensors are mounted from the settled CG height, so the LiDAR sits rig.lidar_height_m
-        above the ground as on RELLIS.
+        above the ground as on RELLIS. A new vehicle is loaded every time: MAVS only takes the
+        initial position before the vehicle's first update, so placing the same vehicle again
+        left it where it was (found 2026-11-26).
         """
+        self.vehicle = self.mavs.MavsRp3d()
+        self.vehicle.Load(str(mavs_data_path() / "vehicles" / "rp3d_vehicles" / self.rig.vehicle_file))
         self.vehicle.SetInitialPosition(x, y, self.ground_height(x, y) + 0.5)
         self.vehicle.SetInitialHeading(yaw)
         # No pedals while settling: in this MAVS build "brake" from standstill drives backwards
@@ -205,6 +299,8 @@ class MavsWorld:
         for _ in range(int(settle_s / dt)):
             self.vehicle.Update(self.ground_env, 0.0, 0.0, 0.0, dt)
         p = self.vehicle.GetPosition()
+        if np.hypot(p[0] - x, p[1] - y) > 1.0:
+            raise RuntimeError(f"the vehicle settled at ({p[0]:.1f}, {p[1]:.1f}), not at ({x:.1f}, {y:.1f})")
         self.cg_height_m = float(p[2]) - self.ground_height(p[0], p[1])
         offsets = sensor_offsets(self.rig, self.cg_height_m)
         self.lidar.SetOffset(offsets["lidar"], IDENTITY_Q)

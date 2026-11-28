@@ -22,6 +22,8 @@ The camera starts seeing the ground about 4.4 m ahead, so the first tick (5 m) s
 below the bottom edge; ticks out of view are not drawn.
 """
 
+import zlib
+
 import cv2
 import numpy as np
 
@@ -63,8 +65,13 @@ def assign_colors(n: int, seed: int) -> list[tuple[str, tuple[int, int, int]]]:
 
 
 def frame_seed(sequence: str, frame: int, salt: int = 0) -> int:
-    """A fixed seed per frame (Python's hash() changes between runs, so it isn't used)."""
-    return int(sequence) * 100_000 + frame + 1_000_003 * salt
+    """A fixed seed per frame (Python's hash() changes between runs, so it isn't used).
+
+    sequence: a RELLIS sequence number ("00003", as in phases 3-5, unchanged) or any name such as
+    a MAVS scene ("trail01"), which is turned into a number with CRC-32.
+    """
+    base = int(sequence) if str(sequence).isdigit() else zlib.crc32(str(sequence).encode("utf-8"))
+    return base * 100_000 + frame + 1_000_003 * salt
 
 
 def smooth_ground_heights(xy: np.ndarray, ground_z: np.ndarray, spec: GridSpec,

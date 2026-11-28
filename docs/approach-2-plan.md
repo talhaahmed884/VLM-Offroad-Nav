@@ -671,7 +671,10 @@ below), with the RELLIS-like sensors.
     are not in the user's MAVS data; only `forest_simple.json` has all its plants. One missing
     mesh gives the scene an invalid bounding box, `GetSurfaceHeight` then returns -FLT_MAX and the
     vehicle physics fails (NaN, access violation). Generated scenes are cleaned
-    (`drop_missing_meshes`).
+    (`drop_missing_meshes`). The missing folders are not in MAVS's public GitHub repository
+    either (checked 2026-11-26), so a new download can't add them. **User decision
+    (2026-11-26): keep `forest_simple.json`.** There are no rock or log meshes; obstacles for
+    step 6.4 can be road blockades, walls, cubes and cylinders.
   - **The brake drives backwards** from standstill (Warthog and MRZR4): the vehicle settles with
     no pedals; the controller brakes only while moving forward.
   - **Throttle works like an accelerator held down** (0.1 reaches 3.1 m/s after 4 s and keeps
@@ -693,6 +696,203 @@ below), with the RELLIS-like sensors.
   3.7-5.4 px). One scan ~48,500 points; loading, placing and capturing take ~4 s.
 - Code: `sim/rig.py`, `sim/mavs_world.py`, `sim/control.py`, `scripts/sim_check_rig.py`
   (`run_all.py` step `sim_rig`); tests `test_sim_rig.py`, `test_sim_control.py`.
+- **Verified 2026-11-26 (the user ran `run_all.py --only tests sim_rig`): step 6.1 is done.**
+  `rig_check.json` is identical to my scratchpad run (so MAVS generates the same trail every
+  time: scenes are reproducible), CHECK OK, projection 0.73 px from MAVS's own (in
+  `projection_check.png` our points cover every pixel MAVS marks). Note for 6.4: `trail01` is a
+  straight trail ('Ridges'), so turns need other scenes.
+
+**Step 6.2 status (2026-11-26): written and checked in my scratchpad; the user has not run it.**
+- `sim/planning.py`: `plan_frame` (scan → cost map → relaxed grid → candidates, phase 2 code
+  unchanged; ~0.1 s per frame), `trail_ahead_flu` / `trail_direction_word` (Mode B's word from
+  the trail ~50 m ahead), `straightest_index` / `cheapest_index`. `nav.visual_prompt.frame_seed`
+  now also takes scene names (CRC-32; RELLIS numbers give the same seeds as before).
+  `scripts/sim_show_candidates.py` (`run_all.py` step `sim_candidates`): 6 places on `trail01`,
+  the picture, a top view, and with `--ask` both models in Modes A and B.
+- **Candidates on `trail01`:** 2 per frame everywhere (one along the trail, one bending left at
+  ~12 m into tall grass): a straight 4 m trail lined by dense grass and trees leaves few
+  distinct paths. Cost grid checked cell by cell: the trail is drivable or unknown (LiDAR rings
+  ~0.5 m apart beyond ~10 m, as on RELLIS), blocked cells are at its edges.
+- **General-ability check (the item moved from phase 5):** both models answer every MAVS
+  picture validly (12 / 12 each). The fine-tuned 4B chooses the path along the trail in 6 / 6
+  frames (both modes) and, unlike on RELLIS, does not call everything "all": the trail path
+  "all", the one bending into the grass "tick 2". The zero-shot 4B chooses the trail path in
+  5 / 6 and is over-cautious (the trail path "tick 2"). Laptop speed: 3-4 s per answer (first
+  answer ~18 s, warm-up), models load in 13-16 s. Only 6 easy frames: no real choice yet.
+- **The user's run (2026-11-26) found a reproducibility problem:** the candidates and top views
+  were byte-identical to mine, but every camera picture differed (~2 grey levels brighter,
+  clouds different) and 3 of 24 answers changed. MAVS's sun follows the computer's clock and
+  its clouds are random: two runs seconds apart differed by 5.8 grey levels on average.
+  **Fix:** `MavsWorld` sets a fixed date (2026-06-21), time (12:00:00) and no clouds; two
+  separate runs now render identical pixels (12 / 12 files identical), 6.1 still passes. The
+  user has to rerun 6.2. My reference answers with the fixed lighting: fine-tuned picks the
+  trail path 6 / 6 in both modes, ticks it "all" and the other path "tick 2" in every frame;
+  zero-shot picks the trail path 4 / 6 (Mode A) and 5 / 6 (Mode B), ticks everything "tick 1-2".
+- **Verified 2026-11-26 (the user reran `sim_candidates`): step 6.2 is done.** All 12 pictures
+  byte-identical to my run and all 24 answers identical (choice, ticks, action): simulator runs
+  are now fully reproducible, VLM included.
+
+**Step 6.3 status (2026-11-26): written and checked in my scratchpad; the user has not run it.**
+- Code: `sim/metrics.py` (`project_on_trail` → progress along the trail and signed offset from
+  its centre, `is_stuck`), `sim/choosers.py` (`StraightestChooser`, `CheapestChooser`,
+  `VlmChooser` with its own history, an invalid choice falls back to straightest and is logged),
+  `sim/loop.py` (`LoopParams`, `run_episode` → `Episode`), `scripts/sim_drive.py` (`run_all.py`
+  step `sim_drive`). Tests `test_sim_loop.py` with a kinematic stand-in world.
+- The loop: a decision every 0.5 s of simulated time (time stands still while the chooser
+  thinks), the chosen path fixed in the world and driven by the follower in 0.02 s steps. Ends:
+  finished (within 5 m of the trail's end), stopped, off trail (> 3 m from the centre), stuck
+  (< 0.5 m progress in 10 s), time limit (240 s).
+- **Three fixes found by driving (all in `sim/`, the phase 2-3 code is unchanged):**
+  - **Candidates were 12.5 cm to the left:** they run through grid-cell centres and the
+    vehicle's own cell centre is (0.125, 0.125) m away; offline harmless, in closed loop the
+    follower aimed left at every decision and the vehicle turned off the trail. `plan_frame`
+    now shifts them onto the vehicle (`centred_on_vehicle`).
+  - **No candidate → keep the previous path** for at most 2 decisions (1 s), then stop
+    (`LoopParams.max_hold`); counted per run (`held_decisions`). On RELLIS such a frame meant an
+    immediate stop.
+  - **Overhanging foliage blocked the trail:** the canopy edge hangs 1.5-1.8 m over MAVS's
+    trails, just under the 1.8 m vehicle height, so the relaxed grid saw 1.6 m "obstacles"
+    across the trail and the first run stopped after 12 m. A cell now counts as an obstacle only
+    if something stands up from the ground in it (a point 0.3-1.0 m above the ground):
+    `without_overhangs` (on by default in the simulator). Blocked cells at that spot: 2,651 →
+    1,430; trunks, bushes and posts still block (test).
+- **First full run, `trail01`, straightest, Mode A:** finished, 193 of 197 m in 136 s of
+  simulated time, 272 decisions, never without a candidate, on average 0.69 m (at most 1.40 m)
+  from the trail centre (the trail is 4 m wide), ~3 min wall time (0.7 s per decision).
+- The fixes change the candidates slightly, so 6.2's pictures and answers are no longer the
+  current ones (rerun if needed for the report).
+- **Verified 2026-11-26 (the user ran `sim_drive`): step 6.3 is done.** All 272 decisions and
+  all 28 pictures identical to my run (only the wall time differs: 198.5 vs 186 s): the whole
+  closed loop, MAVS physics included, is reproducible.
+
+**Step 6.4 status (2026-11-26): in progress (written, checks running in my scratchpad).**
+- **User decisions:** all four scenes (S-curves, fork, blocked, half-blocked); collisions judged
+  from object positions; then, after the first drives, **keep the RELLIS camera and design the
+  scenes within its limits** ("gentler scenes"; the narrow view is reported as a limitation).
+- **No MAVS rebuild needed.** MAVS's Python API can't pass a custom trail to its scene generator
+  (the C++ `RandomScene::Load(json)` with "Path File" isn't exported), but a generated scene file
+  lists its trail texture as path files and every plant instance, so a design is drawn by
+  editing that file: `sim/scenes.py` (pure: trail pieces, designs, blockades, path files) and
+  `mavs_world.build_designed_scene` (one forest without a trail, `outputs/sim/scenes/base`; per
+  design: the trails as path files, plants within 2.5 m of a trail centre removed, trees within
+  3.5 m, blockades added; `<name>_design.json` holds the routes = answer keys). A fork works by
+  listing two path files.
+- **Collisions:** `scene_obstacles` (tree trunks by mesh, radius ~0.3-0.4 m x scale; blockades
+  sampled along their length) and `metrics.footprint_gaps` (MRZR4 footprint 3.5 x 1.6 m);
+  outcome "collision" and `min_gap_m` per run.
+- Findings while building:
+  - MAVS's road blockade is only 0.8 m tall, and the relaxed grid treats anything under 1.5 m
+    as passable vegetation, so the walls are scaled to 1.8 m (MAVS scales after turning the
+    mesh's y up to z: height is the third scale value). Two walls (5.8 m) left room to go round
+    through the grass, so "blocked" uses four (11.5 m).
+  - **Bug: placing the same MAVS vehicle twice didn't move it** (MAVS only takes the initial
+    position before the first update). `place()` now loads a new vehicle each time and checks
+    where it settled. **This invalidates step 6.2's six frames: all six were the same spot**
+    (different colors only); 6.1 and 6.3 place once and are unaffected. 6.2 must be rerun.
+  - **The narrow RELLIS camera (38 degrees) limits the scenes:** with 22 m bends even the path
+    along the trail ended out of view and "straightest" stopped after 35 m; passing the first
+    half-wall needed a 3 m swerve within 5-8 m (out of view). Loosening the view rule didn't
+    help. Redesigned: bends of radius 40 m (`BEND_RADIUS_M`), fork branches leaving through a
+    40 m arc to 25 degrees, the half-wall over the left third of the trail.
+- **Driving fixes found with the new scenes** (simulator only; phase 2-5 code unchanged):
+  - **Grid paths turn late:** shortest paths on the 8-connected grid run straight as long as they
+    can and bend only near their end (on flat ground every candidate was straight for the first
+    9 m). The follower (look-ahead 3 m) then never turned, and each new plan started straight
+    again: the vehicle drifted into the half-wall's shadow, and even an oracle could not follow
+    a 40 m bend on open ground. Look-ahead 5 / 7 m was no fix (7 m passed the half-wall but cut
+    the bends and left the curves trail). **Fix: `planning.pull_string`** straightens each
+    candidate (jumps to the farthest point a straight segment reaches without crossing a
+    costlier cell than the original path does there), so a side path turns from the start; the
+    picture shows the straightened path, so the VLM sees what is driven. With it the
+    half-cell shift (`centred_on_vehicle`) is not needed (straight paths start at the vehicle).
+  - **An oracle chooser** (`OracleChooser`: the candidate closest to the route, a reference
+    like phase 4's driver oracle) shows what the candidates allow.
+  - **Obstacle margin 1.0 m** (`planning.SIM_COST_PARAMS`): RELLIS's 0.75 m is less than half
+    the MRZR4's width (1.6 m), so a path along the margin scraped the half-wall.
+  - **A candidate's end must be in view:** the phase 2 rule checks points from 5 m on, so a
+    3 m path at 70 degrees passed with nothing checked.
+  - **The half-blocked route swerves 1.2 m right around the wall** (`scenes.swerve`): along the
+    trail centre it passed 0.76 m from the wall's end, and the oracle following it grazed it.
+  - With straightened paths (before the last three fixes): oracle finished trail01, curves and
+    both fork routes and stopped at the full wall; straightest left the curves trail and one
+    fork route, and stopped at the wall.
+- **Final check of the scene set (my scratchpad, 2026-11-26), Mode A / fork in Mode B:**
+
+  | scene | oracle (reference) | straightest |
+  |---|---|---|
+  | trail01 | finished, max 0.47 m off, gap 0.93 m | finished, max 1.15 m, gap 0.59 m |
+  | curves | finished, max 1.26 m | stopped at 72 of 130 m (no visible path in a bend) |
+  | fork, left route | finished, max 0.65 m | stopped at 51 of 93 m |
+  | fork, right route | finished, max 1.11 m | off the route at 46 m |
+  | blocked | stopped ~10 m before the wall | stopped ~10 m before the wall |
+  | halfblocked | finished, gap to the wall 0.80 m | finished, gap 0.25 m |
+
+  Every scene can be driven with these candidates (the oracle), and the straight-ahead
+  baseline fails the bends and the fork, so the set separates choosers. The fixes changed the
+  candidates, so 6.3's trail01 run and 6.2 must be rerun.
+- **Step 6.2 corrected (my rerun with the placement fix and the new candidates):** the six
+  frames are now six places, with 2-3 candidates each (bearings -11 ... +16 degrees). Both
+  models 12 / 12 valid. Fine-tuned: picks the straightest candidate in 6 / 6 (both modes) and
+  calls every path "all" in 4 / 6 frames (as on RELLIS); zero-shot: the straightest in 4 / 6,
+  over-cautious ("tick 1-2"). The earlier "fine-tuned tells the grass path apart" came from one
+  spot seen six times.
+- **Verified 2026-11-27 (the user ran `run_all.py --only tests sim_candidates sim_drive sim_scenes
+  sim_oracle sim_oracle_wall`): steps 6.2, 6.3 (rerun) and 6.4 are done.** 6.2: 12 / 12 pictures
+  and 24 / 24 answers identical to my run; 6.3 (trail01, straightest): finished, 192 of 197 m,
+  decisions identical; scene checks identical (CHECK OK); oracle on curves (finished, max
+  1.26 m) and halfblocked (finished, 0.80 m from the wall), decisions identical.
+
+**Step 6.5 status (2026-11-27): written; my self-check done; the user has not run it.**
+- User decisions: start 6.5 without video recording ("We'll do it later": then a replay of the
+  saved runs, chase view with MAVS's MRZR4 mesh + the VLM's picture); run on the laptop (I
+  advised against building MAVS on Polaris for this).
+- `sim/evaluation.py` (the plan: 42 runs, word-blind choosers in Mode A only, the fork per
+  route; success rules; `decision_stats`, `chooser_summary`), `sim/runs.py` (shared run saving),
+  `scripts/sim_run_all.py` (resumable, each VLM loaded once), `scripts/sim_evaluate.py`
+  (`outputs/sim/evaluation.md`, 5 tables).
+- **Self-check (scratchpad):** the three baselines on all six scene/routes (31 min) and both VLMs
+  on the blocked trail (first closed-loop VLM runs: 3.3 / 4.2 s per answer, 100% valid).
+  Baselines, tests passed in Mode A: straightest 3 / 5 (fails the curves and the fork),
+  cheapest 5 / 5 (closest gap to an obstacle 0.14 m on halfblocked), oracle 5 / 5. Blocked
+  trail: every chooser stopped 8-10 m before the wall because the candidates ran out; neither
+  VLM ever answered "stop". The fine-tuned model ticked its path "all" (safe for 15 m) right up
+  to the wall at ~10 m; the zero-shot one said "tick 2" (10 m).
+- Blocked trail: full-length candidates (the nearer ones bending round the wall's ends) from 25
+  to 13 m before the wall, none at 10 m; so the VLM sees the wall several times and can say
+  stop, otherwise the vehicle stops by itself ~9 m before it (logged as "chooser said stop" vs
+  "no candidates").
+- 2026-11-27: the user's batch crashed at the first Mode B run (trail01, zero-shot, ~176 m):
+  the trail's last 20 m give no direction word. Fixed: the last word stays in force.
+
+**Step 6.5 runs verified (2026-11-28, the user's batch, all 42 runs; `outputs/sim/evaluation.md`).**
+The baselines match my self-check exactly (the loop is reproducible).
+
+| chooser | Mode A tests passed (fork = either branch) | Mode B tests passed (fork per route) | mean distance from route | closest gap |
+|---|---|---|---|---|
+| straightest | 3 / 5 | 3 / 6 | 0.85 m | 0.25 m |
+| cheapest (LiDAR alone) | 5 / 5 | 5 / 6 (fails fork-left) | 0.49 m | 0.14 m |
+| oracle (answer key) | 5 / 5 | 6 / 6 | 0.30 m | 0.80 m |
+| zero-shot 4B | 4 / 5 (fails curves) | 5 / 6 (fails curves) | 0.61 / 0.74 m | 0.15 m |
+| fine-tuned 4B | 5 / 5 | 5 / 6 (fails fork-right) | 0.66 / 0.68 m | 0.06 m |
+
+- **No collisions, no "stop" answers** (0 of ~3,200 VLM answers; all valid, no fallbacks). Every
+  chooser stopped 8-10 m before the blocked trail's walls because the planner ran out of
+  candidates. The fine-tuned model called every path "all" in 75-77% of answers, the zero-shot in 0%.
+- **Direction word (the fork):** the fine-tuned model's choices on fork-right are identical in
+  Modes A and B, decision by decision, although 47 of 61 words said "slight/bear right": it
+  ignores the word (as in phase 5: 5% changed choices). The zero-shot model takes the left
+  branch without a word and the right one when told "slight right": it follows the word.
+- **Curves:** zero-shot drifted to the outside (left) of the second, right-hand bend, choosing
+  left-pointing candidates in a right bend and switching between them, until no candidate was
+  left (stopped at 56% / 40%). Fine-tuned finished both, as cheapest and oracle.
+- **Half-wall:** every real chooser passed the wall's end within 0.06-0.25 m (fine-tuned 0.06 m,
+  within the accuracy of the rectangle-footprint check); the oracle kept 0.80 m by choosing
+  the paths further right. The fine-tuned model drove ~0.8 m left of the swerving route and
+  rated every path "all" there. The planner's margin (inflation 1.0 m minus half the width 0.8 m)
+  is thin, so the choice between offered paths decides the clearance.
+- Answer time: zero-shot 3.4 s, fine-tuned 4.7-5.3 s.
+- One run per combination (the simulator is deterministic), so pass counts are single
+  observations; the decision-level shares rest on 700-900 decisions per chooser and mode.
 
 ### Phase 6 notes kept from the plan
 - An off-road simulator (e.g. Isaac Sim, AirSim/Colosseum, BeamNG, or an off-road CARLA map)

@@ -61,6 +61,10 @@ python scripts/run_all.py --full      # also the GPU check and the MAVS steps
 | Step | Script | What |
 |---|---|---|
 | 6.1 | `scripts/sim_check_rig.py` | generates a trail scene, places the MRZR4 with a RELLIS-like LiDAR and camera, captures one frame, and saves the image, the LiDAR projected on it, a comparison with MAVS's own projection (calibration check), and a view from above |
+| 6.2 | `scripts/sim_show_candidates.py` | stands at 6 places on the trail, builds the cost map and the candidate paths from the simulated LiDAR, draws the VLM's picture, and (with `--ask zeroshot finetuned`) asks both models in Modes A and B |
+| 6.3 | `scripts/sim_drive.py --chooser straightest\|cheapest\|zeroshot\|finetuned --mode A\|B` | one closed-loop run: a decision every 0.5 s of simulated time, the chosen path driven by the path follower, until the trail's end, a stop, leaving the trail, getting stuck, or the time limit; saves every decision, a summary and a trajectory plot |
+| 6.4 | `scripts/sim_build_scenes.py` | builds the test scenes from one generated forest: S-curves, a fork (routes `left` / `right`), a trail blocked by a wall, a trail half-blocked by a wall; checks each (routes, candidates at the start, wall height and which candidates get past it) and saves views from above |
+| 6.5 | `scripts/sim_run_all.py`, `scripts/sim_evaluate.py` | every chooser (straightest, cheapest, the oracle reference, zero-shot and fine-tuned Qwen3-VL-4B) on every scene and route, in Modes A and B (resumable), then the tables in `outputs/sim/evaluation.md`: tests passed, collisions, leaving the trail, wrong stops, completion, distance from the route, who stopped at the wall, what the choosers did |
 
 ## Layout
 

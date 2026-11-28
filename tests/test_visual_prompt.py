@@ -136,3 +136,11 @@ def test_prepare_selector_input():
     assert a.colors == b.colors and a.listed == b.listed and a.prompt == b.prompt  # repeatable
     assert sorted(a.listed) == sorted(a.colors) and len(set(a.colors)) == 3
     assert "Candidates: " + ", ".join(a.listed) in a.prompt and '"straight"' in a.prompt
+
+
+def test_frame_seed_keeps_rellis_numbers_and_accepts_scene_names():
+    from offroad.nav.visual_prompt import frame_seed
+
+    assert frame_seed("00003", 22) == 3 * 100_000 + 22  # unchanged from phases 3-5
+    assert frame_seed("trail01", 30) == frame_seed("trail01", 30)  # repeatable across runs
+    assert frame_seed("trail01", 30) != frame_seed("trail02", 30)

@@ -39,6 +39,23 @@ STEPS = [
     # Phase 6 (closed loop in MAVS, see docs/approach-2-plan.md). Needs MAVS, so --full or --only.
     Step("sim_rig", "6.1: trail scene + Warthog with a RELLIS-like rig, one frame -> outputs/sim/rig_check",
          ("scripts/sim_check_rig.py",), slow=True),
+    Step("sim_candidates", "6.2: candidates + the VLM's picture on 6 MAVS frames, zero-shot and fine-tuned answers "
+         "-> outputs/sim/candidates (needs the GPU)",
+         ("scripts/sim_show_candidates.py", "--ask", "zeroshot", "finetuned"), slow=True),
+    Step("sim_drive", "6.3: one closed-loop run on trail01 with the straightest candidate (~3 min, no GPU) "
+         "-> outputs/sim/runs/trail01_straightest_modeA",
+         ("scripts/sim_drive.py", "--chooser", "straightest"), slow=True),
+    Step("sim_scenes", "6.4: build and check the test scenes (curves, fork, blocked, halfblocked) "
+         "-> outputs/sim/scenes", ("scripts/sim_build_scenes.py",), slow=True),
+    Step("sim_oracle", "6.4: the oracle (candidate closest to the route) on the curves and the half-blocked trail "
+         "-> outputs/sim/runs/{curves,halfblocked}_oracle_modeA",
+         ("scripts/sim_drive.py", "--chooser", "oracle", "--scene", "curves"), slow=True),
+    Step("sim_oracle_wall", "6.4: the oracle on the half-blocked trail",
+         ("scripts/sim_drive.py", "--chooser", "oracle", "--scene", "halfblocked"), slow=True),
+    Step("sim_runs", "6.5: every chooser on every scene, Modes A and B (resumable; ~3-4 h with the VLMs) "
+         "-> outputs/sim/runs", ("scripts/sim_run_all.py",), slow=True),
+    Step("sim_eval", "6.5: tables of the closed-loop runs -> outputs/sim/evaluation.md",
+         ("scripts/sim_evaluate.py",), slow=True),
 ]
 
 
